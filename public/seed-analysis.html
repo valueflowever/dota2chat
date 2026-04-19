@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Seed Analysis</title>
+  </head>
+  <body>
+    <script>
+      const payload = {
+        request: {
+          audience: "creator",
+          mode: "content-breakdown",
+          matchId: "8724913167",
+          focusQuestion: "What is the best story angle for this replay?",
+          contextSummary:
+            "The early lead slipped away around two Roshan sequences.",
+          skillBracket: "",
+          role: "analyst",
+          lane: "",
+          matchTitle: "Major Group Stage Review",
+          patch: "7.39c",
+          draftSummary: "Aggressive mid game lineup with shaky reset timing.",
+          laneOutcome: "",
+          replayNotes: "",
+          transcript:
+            "Commentary keeps returning to the Roshan momentum swing.",
+          desiredTone: "balanced",
+          timeline: [],
+        },
+        timelineText: "",
+        result: {
+          report: {
+            summary: {
+              headline:
+                "这场最适合讲成‘一方拿到前中期地图优势，却在 Roshan 一拍把整局主动权交出去’的故事。",
+              overview:
+                "从内容表达角度，这场示例最有戏的地方在于强反差：16:52 和 17:41 天辉连续拆塔，看上去已经把比赛握在手里；但 27:23 夜魇拿盾后，剧情几乎瞬间反转，28:29 开始的带盾上高直接把整局推进成终结。",
+              verdict:
+                "这是一个典型的‘不会巩固优势，就会在关键资源点把优势连本带利吐回去’的比赛脚本。",
+              confidence: "medium",
+            },
+            priorityIssues: [
+              {
+                title: "剧情伏笔：领先建立得很快，领先管理却没有跟上",
+                description:
+                  "前中期天辉两连拔塔非常像一场标准的滚雪球开局，但这恰恰构成了后面反转的伏笔。",
+                whyItMatters:
+                  "观众最容易被“明明看起来要赢了，为什么突然开始输”吸引。",
+                nextMove:
+                  "如果你要讲优势方如何巩固优势，就把镜头放在拆塔后 30 秒的空白动作上。",
+              },
+              {
+                title: "高潮节点：Roshan 不是结果，而是整个反转的引爆点",
+                description:
+                  "27:23 的 Roshan 之所以好讲，不是因为‘夜魇拿盾了’这件事本身，而是因为它把前面所有埋下的流程问题一次性爆出来。",
+                whyItMatters:
+                  "这类节点天然适合做视频或复盘稿里的高潮，因为观众能一眼看到比赛从此开始变样。",
+                nextMove:
+                  "内容上可以先回放 Roshan 前那波关键接触，再切到 27:23 的吃盾，形成因果闭环。",
+              },
+              {
+                title: "结尾收束：带盾上高为什么能一波带走",
+                description:
+                  "28:29 到 29:14 的推进最适合作为收束镜头，因为它把前面的伏笔全部兑现了。",
+                whyItMatters:
+                  "好的结尾不是只告诉观众‘比赛结束了’，而是让观众明白为什么结束得这么快。",
+                nextMove:
+                  "结尾部分不要只报兵营和基地掉了，而要点明天辉到底做错了什么、夜魇又具体做对了什么。",
+              },
+            ],
+            phaseBreakdown: [
+              {
+                phase: "铺垫段",
+                verdict:
+                  "前半段最适合交代天辉为什么会让观众以为他们已经稳了：推进节奏顺、拆塔快、比赛表面走势健康。",
+                takeaways: [
+                  "两连拔塔是故事的第一层‘稳了’错觉。",
+                  "真正的伏笔在于拆塔后没有继续把地图收紧。",
+                ],
+                winCondition:
+                  "内容上把‘拿塔不等于锁图’讲清楚，观众才会理解后面的反转不是偶然。",
+              },
+              {
+                phase: "反转段",
+                verdict:
+                  "Roshan 节点是全片最重要的剧情拐点，因为它把前面的慢性问题一次性炸开了。",
+                takeaways: [
+                  "天辉做错的是准备流程，而不是某个英雄单独犯罪。",
+                  "夜魇做对的是把劣势处理成一次高质量止血。",
+                ],
+                winCondition:
+                  "把 Roshan 前后的镜头按因果链剪出来，而不是只留吃盾和团战结果。",
+              },
+              {
+                phase: "收束段",
+                verdict:
+                  "带盾上高这一分钟是前面所有节奏问题的最终结算，推进为什么能一波到底，才是这局最好的总结句。",
+                takeaways: [
+                  "天辉守高没有把止损目标排优先级。",
+                  "夜魇推进时没有给对手第二次重置地图的机会。",
+                ],
+                winCondition:
+                  "结尾用‘优势如何被巩固、劣势为何没能止住’来收，而不是只说哪边操作更好。",
+              },
+            ],
+            keyMoments: [
+              {
+                time: "16:52",
+                title: "天辉建立起‘这局要稳了’的第一层错觉",
+                whatHappened:
+                  "16:52 和 17:41 连续两座外塔掉落，让整场的前中期走势看起来都站在天辉这边。",
+                whyItMatters:
+                  "天辉这里真正做错的是没有在最像优势方的时候继续做优势方该做的事。",
+                adjustment:
+                  "如果要讲优势如何巩固，这里就该点明拆塔后还要继续顶线、补深眼、卡入口；如果要讲劣势如何止损，也可以反衬夜魇这时没有乱打。",
+              },
+              {
+                time: "27:23",
+                title: "Roshan 成为整个故事真正翻面的瞬间",
+                whatHappened:
+                  "27:23 夜魇拿到 Roshan，这一拍把前面所有的铺垫都收成了结果。",
+                whyItMatters:
+                  "这波之所以值得细讲，是因为‘做错了什么’非常具体：天辉做错的是流程顺序，夜魇做对的是止血方式。",
+                adjustment:
+                  "内容表达上可以把这波做成全片高潮：先放 Roshan 前的准备断档，再切夜魇拿盾。",
+              },
+              {
+                time: "28:29",
+                title: "带盾上高把反转彻底写死",
+                whatHappened:
+                  "28:29 夜魇开始中路高地推进，到 29:14 前后比赛已经没有再被拉长的空间。",
+                whyItMatters:
+                  "天辉这时做错的不是不拼，而是拼错了层级；夜魇做对的不是纯操作，而是推进目标非常清楚。",
+                adjustment:
+                  "收束时要把‘优势怎么被巩固、劣势为什么没止住’直接点破。",
+              },
+            ],
+            practicePlan: [
+              {
+                title: "把两连拔塔后的空白动作讲出来",
+                duration: "一段脚本整理",
+                steps: [
+                  "先列出拆塔之后本来应该继续发生的三件事：顶线、补眼、站位。",
+                  "再对照这局实际没有发生什么，把‘优势没被巩固’讲具体。",
+                ],
+              },
+              {
+                title: "把 Roshan 做成因果链而不是结果播报",
+                duration: "一个章节",
+                steps: [
+                  "先讲 Roshan 前准备为何出问题，再讲 27:23 为什么必然重要。",
+                  "把天辉做错的流程和夜魇做对的止血方式并排讲。",
+                ],
+              },
+              {
+                title: "用高地推进做结尾闭环",
+                duration: "结尾段落",
+                steps: [
+                  "点出天辉守高时目标太贪，没有把劣势处理成止损流程。",
+                  "点出夜魇带盾推进时为什么没有给对手第二次机会。",
+                ],
+              },
+            ],
+            audienceAddOn: {
+              title: "内容创作者视角",
+              summary:
+                "这场示例最适合做成一条很完整的反转叙事：前中期看似稳住的一方，为什么会在 Roshan 一拍把主动权和比赛一起送掉。",
+              bullets: [
+                "开头先让观众相信天辉已经占优，后面反转才更有张力。",
+                "Roshan 节点一定要讲因果，不要只播结果。",
+              ],
+            },
+            source: "demo-engine",
+            generatedAt: "2026-04-06T00:00:00.000Z",
+          },
+          prompt: {
+            system: "system",
+            user: "user",
+            responseShape: "shape",
+          },
+        },
+      };
+
+      localStorage.setItem("ancient-lens-analysis-result", JSON.stringify(payload));
+      location.replace("/analysis");
+    </script>
+  </body>
+</html>

@@ -1,0 +1,269 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ResultView } from "@/components/workspace/result-view";
+import type { AnalysisConversation, AnalysisRequest } from "@/lib/analysis/schema";
+
+const baseRequest: AnalysisRequest = {
+  audience: "solo-player",
+  mode: "ranked-coaching",
+  matchId: "8724913167",
+  focusQuestion: "请分析这场比赛的整体节奏、关键转折点，以及下一把最值得优先修正的一项动作。",
+  contextSummary: "",
+  skillBracket: "",
+  role: "",
+  lane: "",
+  matchTitle: "",
+  patch: "",
+  draftSummary: "",
+  laneOutcome: "",
+  replayNotes: "",
+  transcript: "",
+  desiredTone: "balanced",
+  timeline: [],
+};
+
+const matchConversation: AnalysisConversation = {
+  mode: "match-replay",
+  title: "比赛 8724913167",
+  summary: "首轮复盘",
+  source: "demo-engine",
+  generatedAt: "2026-04-06T00:00:00.000Z",
+  messages: [
+    {
+      id: "user-entry",
+      role: "user",
+      content: "8724913167",
+    },
+    {
+      id: "assistant-entry",
+      role: "assistant",
+      content:
+        "先说结论：这局不是纯操作没打过，而是 Roshan 前后的节奏管理断了。下一把先把边线、站位和第一拍口令固定下来。",
+    },
+  ],
+  followUps: [
+    {
+      question: "这局为什么会输？",
+      answer: "因为你们每次进关键区域前都少了一层准备，到了 Roshan 才集中爆掉。",
+    },
+    {
+      question: "我最大的失误是什么？",
+      answer: "最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。",
+    },
+    {
+      question: "下一把先改什么？",
+      answer: "先只改一个习惯：每次准备接目标前，先口头确认边线、视野和谁先手。",
+    },
+    {
+      question: "有哪些关键时间点？",
+      answer: "先回看 16:52、27:23 和 28:29，这三段最能解释整局是怎么翻掉的。",
+    },
+  ],
+};
+
+describe("ResultView", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders the analysis result as a polished chat layout with context chips", () => {
+    const { container } = render(
+      <ResultView
+        request={baseRequest}
+        conversation={matchConversation}
+        warning="OpenAI fallback warning"
+      />,
+    );
+
+    expect(screen.getByText("8724913167")).toBeInTheDocument();
+    expect(screen.getByText(/先说结论：这局不是纯操作没打过/u)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "比赛 8724913167" })).toBeInTheDocument();
+    expect(screen.getByText("首轮复盘")).toBeInTheDocument();
+    expect(screen.getByText("当前分析")).toBeInTheDocument();
+    expect(screen.getByText("录像复盘")).toBeInTheDocument();
+    expect(screen.getByText("demo-engine")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "这局为什么会输？" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一把先改什么？" })).toBeInTheDocument();
+    expect(screen.getByLabelText("继续追问")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+    expect(screen.getByText("OpenAI fallback warning")).toBeInTheDocument();
+    expect(container.querySelector(".analysis-chat-app")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-app-theme-notion")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-app-theme-cool")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-document")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-header")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-header-copy")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-thread-stage")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-hero")).toBeNull();
+    expect(container.querySelector(".analysis-chat-message-accent")).toBeNull();
+    expect(container.querySelector(".analysis-chat-composer-bar")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-suggestion-strip")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-composer-shell")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-suggestion-panel")).toBeNull();
+    expect(container.querySelector(".analysis-chat-composer-panel")).toBeNull();
+    expect(container.querySelector(".analysis-chat-message-block-assistant")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-message-block-user")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-message-block-user-compact")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-row-user-compact")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-message-block-user-expanded")).toBeNull();
+    expect(container.querySelector(".analysis-chat-row-user-wide")).toBeNull();
+    expect(container.querySelector(".analysis-chat-context")).not.toBeNull();
+    expect(container.querySelector(".analysis-thread-shell")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-dock")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-composer")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-dock-blended")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-dock-integrated")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-composer-bar-subtle")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-composer-bar-integrated")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-input-tall")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-input-taller")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-send-muted")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-send-soft")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-suggestions")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-suggestion-block")).not.toBeNull();
+    expect(screen.queryByText("关键事件速览")).not.toBeInTheDocument();
+    expect(screen.queryByText("阶段复盘矩阵")).not.toBeInTheDocument();
+  });
+
+  it("sends a suggested question as a real chat turn", async () => {
+    const user = userEvent.setup();
+
+    render(<ResultView request={baseRequest} conversation={matchConversation} />);
+
+    await user.click(screen.getByRole("button", { name: "我最大的失误是什么？" }));
+
+    expect(screen.getAllByText("我最大的失误是什么？")).toHaveLength(2);
+    expect(
+      screen.getByText("最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not reuse message keys when the same suggested question is sent twice", async () => {
+    const user = userEvent.setup();
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(<ResultView request={baseRequest} conversation={matchConversation} />);
+
+    await user.click(screen.getByRole("button", { name: "我最大的失误是什么？" }));
+    await user.click(screen.getByRole("button", { name: "我最大的失误是什么？" }));
+
+    expect(screen.getAllByText("我最大的失误是什么？")).toHaveLength(3);
+    expect(
+      screen.getAllByText("最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。"),
+    ).toHaveLength(2);
+    expect(
+      consoleErrorSpy.mock.calls.some((call) =>
+        call.some(
+          (value) =>
+            typeof value === "string" &&
+            value.includes("Encountered two children with the same key"),
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("sanitizes duplicate message ids from an incoming stored conversation", () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <ResultView
+        request={baseRequest}
+        conversation={{
+          ...matchConversation,
+          messages: [
+            {
+              id: "follow-up-我最大的失误是什么？-user",
+              role: "user",
+              content: "我最大的失误是什么？",
+            },
+            {
+              id: "follow-up-我最大的失误是什么？-assistant",
+              role: "assistant",
+              content: "最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。",
+            },
+            {
+              id: "follow-up-我最大的失误是什么？-user",
+              role: "user",
+              content: "我最大的失误是什么？",
+            },
+            {
+              id: "follow-up-我最大的失误是什么？-assistant",
+              role: "assistant",
+              content: "最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText("我最大的失误是什么？").length).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getAllByText("最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。").length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      consoleErrorSpy.mock.calls.some((call) =>
+        call.some(
+          (value) =>
+            typeof value === "string" &&
+            value.includes("Encountered two children with the same key"),
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("submits a typed follow-up through the analysis API and appends the response", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          conversation: {
+            ...matchConversation,
+            messages: [
+              {
+                id: "user-entry",
+                role: "user",
+                content: "这局高地前到底哪里脱节了？",
+              },
+              {
+                id: "assistant-entry",
+                role: "assistant",
+                content: "高地前真正脱节的是前排已经想上，后排的保护和第二拍还没就位。",
+              },
+            ],
+            followUps: matchConversation.followUps,
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ) as unknown as Response,
+    );
+
+    render(<ResultView request={baseRequest} conversation={matchConversation} />);
+
+    await user.type(screen.getByLabelText("继续追问"), "这局高地前到底哪里脱节了？");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("高地前真正脱节的是前排已经想上，后排的保护和第二拍还没就位。"),
+      ).toBeInTheDocument();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(requestBody.matchId).toBe("8724913167");
+    expect(requestBody.focusQuestion).toBe("这局高地前到底哪里脱节了？");
+  });
+});

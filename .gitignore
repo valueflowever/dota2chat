@@ -30,6 +30,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# local tooling artifacts
+.claude/
+.codex-temp/
+.superpowers/
+test-results/
+
 # env files (can opt-in for committing if needed)
 .env*
 
