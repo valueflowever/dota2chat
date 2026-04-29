@@ -4,9 +4,9 @@
 
 **Goal:** Build a Next.js replay analysis service for Dota 2 that lets different user types submit replay context and receive structured, actionable feedback.
 
-**Architecture:** Use a single App Router page with progressive-disclosure UI, a typed analysis domain in `src/lib/analysis`, and an API route that can call a live OpenAI-backed analyzer or a deterministic local fallback engine. Keep the first version stateless and sample-driven so it is easy to run locally.
+**Architecture:** Use a single App Router page with progressive-disclosure UI, a typed analysis domain in `src/lib/analysis`, and an API route that forwards analysis requests to the backend service. Keep the first version stateless and sample-driven so it is easy to run locally.
 
-**Tech Stack:** Next.js App Router, React 19, TypeScript, Tailwind CSS v4, Vitest, React Testing Library, Zod, optional OpenAI SDK
+**Tech Stack:** Next.js App Router, React 19, TypeScript, Tailwind CSS v4, Vitest, React Testing Library, Zod
 
 ---
 
@@ -299,7 +299,7 @@ npm test
 - [ ] **Step 4: Document environment usage**
 
 ```md
-Use `OPENAI_API_KEY` to enable live AI mode. Without it, the app runs in local demo mode.
+Use `DOTA2_BACKEND_URL` to point the frontend at the backend service. OpenAI credentials and model selection belong to the backend.
 ```
 
 ## Self-Review

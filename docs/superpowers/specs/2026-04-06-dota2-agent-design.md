@@ -126,7 +126,7 @@ Use a layered prompt:
 
 The service should support two modes:
 
-- Live AI mode when an `OPENAI_API_KEY` is present.
+- Live AI mode is owned by the backend service; the frontend should only forward analysis requests.
 - Local fallback mode that synthesizes a believable structured report from the submitted data so the product still works during setup or demos.
 
 ## Frontend Design Direction
