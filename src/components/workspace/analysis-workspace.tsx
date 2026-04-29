@@ -1,12 +1,13 @@
 "use client";
 
-import { ChevronUp, PanelLeftClose, PanelLeftOpen, Search, Settings2 } from "lucide-react";
+import { ChevronUp, PanelLeftClose, PanelLeftOpen, Search, Settings2, X } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { ResultView } from "@/components/workspace/result-view";
 import { defaultDraft } from "@/components/workspace/sample-data";
 import {
   clearCurrentAnalysisResult,
+  deleteAnalysisHistoryItem,
   getAnalysisHistorySnapshot,
   getAnalysisResultSnapshot,
   loadDraftState,
@@ -19,11 +20,15 @@ import { detectAnalysisInput } from "@/lib/analysis/input-mode";
 import type {
   AnalysisConversation,
   AnalysisRequest,
+  MatchSummary,
+  ReplayPreparation,
 } from "@/lib/analysis/schema";
 
 type AnalyzeApiResponse = {
   conversation: AnalysisConversation;
   warning?: string;
+  replayJob?: ReplayPreparation | null;
+  matchSummary?: MatchSummary | null;
   error?: string;
   fieldErrors?: Record<string, string[] | undefined>;
 };
@@ -34,6 +39,12 @@ const FOCUS_QUESTION_LABEL = "补充说明";
 const DEFAULT_REPLAY_QUESTION =
   "请分析这场比赛的整体节奏、关键转折点，以及下一把最值得优先修正的一项动作。";
 const EMPTY_HISTORY: ReturnType<typeof getAnalysisHistorySnapshot> = [];
+
+const EXAMPLE_PROMPTS = [
+  "我中单总在 7-12 分钟掉节奏，怎么修？",
+  "Roshan 前 20 秒该干什么？",
+  "团战阵容怎么打才不会乱？",
+] as const;
 
 function cloneRequest(request: AnalysisRequest): AnalysisRequest {
   return {
@@ -191,6 +202,8 @@ export function AnalysisWorkspace() {
         result: {
           conversation: payload.conversation,
           warning: payload.warning,
+          replayJob: payload.replayJob,
+          matchSummary: payload.matchSummary,
         },
       });
     } catch {
@@ -203,6 +216,11 @@ export function AnalysisWorkspace() {
 
   async function submitAnalysis() {
     await submitPreparedRequest(prepareSubmission(entryText, draft));
+  }
+
+  async function submitExamplePrompt(example: string) {
+    setEntryText(example);
+    await submitPreparedRequest(prepareSubmission(example, draft));
   }
 
   async function handleReplayLoad() {
@@ -313,22 +331,39 @@ export function AnalysisWorkspace() {
                     ]?.content || "";
 
                   return (
-                    <button
+                    <div
                       key={entry.id}
-                      type="button"
                       className={`chat-history-item ${
                         active ? "chat-history-item-active" : ""
                       }`}
-                      aria-label={buildHistoryLabel(entry.result.conversation.title)}
-                      aria-pressed={active}
-                      title={buildHistoryLabel(entry.result.conversation.title)}
                       onClick={() => selectAnalysisHistoryItem(entry.id)}
                     >
-                      <span className="chat-history-item-title">
-                        {buildHistoryLabel(entry.result.conversation.title)}
-                      </span>
-                      <span className="chat-history-item-preview">{lastMessage}</span>
-                    </button>
+                      <button
+                        type="button"
+                        className="chat-history-item-content"
+                        aria-label={buildHistoryLabel(entry.result.conversation.title)}
+                        aria-current={active ? "true" : undefined}
+                        title={buildHistoryLabel(entry.result.conversation.title)}
+                        onClick={() => selectAnalysisHistoryItem(entry.id)}
+                      >
+                        <span className="chat-history-item-title">
+                          {buildHistoryLabel(entry.result.conversation.title)}
+                        </span>
+                        <span className="chat-history-item-preview">{lastMessage}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="chat-history-item-delete"
+                        aria-label="删除对话"
+                        title="删除对话"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          deleteAnalysisHistoryItem(entry.id);
+                        }}
+                      >
+                        <X size={14} aria-hidden="true" />
+                      </button>
+                    </div>
                   );
                 })
               ) : (
@@ -354,19 +389,37 @@ export function AnalysisWorkspace() {
             request={currentResult.request}
             conversation={currentResult.result.conversation}
             warning={currentResult.result.warning}
-            onConversationChange={(nextConversation) => {
+            replayJob={currentResult.result.replayJob}
+            matchSummary={currentResult.result.matchSummary}
+            onConversationChange={(nextConversation, nextWarning, nextMeta) => {
               saveAnalysisResult({
                 id: currentResult.id,
                 request: currentResult.request,
                 result: {
                   conversation: nextConversation,
-                  warning: currentResult.result.warning,
+                  warning: nextWarning ?? currentResult.result.warning,
+                  replayJob:
+                    nextMeta?.replayJob === undefined
+                      ? currentResult.result.replayJob
+                      : nextMeta.replayJob,
+                  matchSummary:
+                    nextMeta?.matchSummary === undefined
+                      ? currentResult.result.matchSummary
+                      : nextMeta.matchSummary,
                 },
               });
             }}
           />
         ) : (
           <section className="chat-empty-stage" aria-label="分析入口">
+            <header className="chat-empty-launch-brand">
+              <span className="chat-empty-launch-eyebrow">DOTA 2 · REPLAY COPILOT</span>
+              <h1 className="chat-empty-launch-title">Ancient Lens</h1>
+              <p className="chat-empty-launch-tagline">
+                粘贴比赛 ID 直接复盘，或问任何 Dota 问题 — 给你下一把先改的那一项。
+              </p>
+            </header>
+
             <form
               className="chat-minimal-launch-form"
               onSubmit={(event) => {
@@ -438,6 +491,25 @@ export function AnalysisWorkspace() {
                 </div>
               ) : null}
             </form>
+
+            <aside
+              className="chat-empty-examples"
+              aria-label="示例问题"
+            >
+              <span className="chat-empty-examples-label">试试这样问</span>
+              <div className="chat-empty-examples-row">
+                {EXAMPLE_PROMPTS.map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    className="chat-empty-example"
+                    onClick={() => void submitExamplePrompt(example)}
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </aside>
           </section>
         )}
       </main>

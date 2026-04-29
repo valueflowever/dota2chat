@@ -1,4 +1,9 @@
-import type { AnalysisConversation, AnalysisRequest } from "@/lib/analysis/schema";
+import type {
+  AnalysisConversation,
+  AnalysisRequest,
+  MatchSummary,
+  ReplayPreparation,
+} from "@/lib/analysis/schema";
 
 export const ANALYSIS_DRAFT_KEY = "ancient-lens-analysis-draft";
 export const ANALYSIS_RESULT_KEY = "ancient-lens-analysis-result";
@@ -17,6 +22,8 @@ export type StoredAnalysisResult = {
   result: {
     conversation: AnalysisConversation;
     warning?: string;
+    replayJob?: ReplayPreparation | null;
+    matchSummary?: MatchSummary | null;
   };
 };
 
@@ -201,6 +208,27 @@ export function clearCurrentAnalysisResult() {
   window.localStorage.removeItem(ANALYSIS_RESULT_KEY);
   window.sessionStorage.removeItem(ANALYSIS_RESULT_KEY);
   writeAnalysisCaches(null, getAnalysisHistorySnapshot());
+  dispatchAnalysisEvent();
+}
+
+export function deleteAnalysisHistoryItem(id: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const history = getAnalysisHistorySnapshot().filter((entry) => entry.id !== id);
+  const currentResult = getAnalysisResultSnapshot();
+
+  let nextCurrentResult = currentResult;
+
+  if (currentResult?.id === id) {
+    window.localStorage.removeItem(ANALYSIS_RESULT_KEY);
+    window.sessionStorage.removeItem(ANALYSIS_RESULT_KEY);
+    nextCurrentResult = null;
+  }
+
+  writeToLocalStorage(ANALYSIS_HISTORY_KEY, history);
+  writeAnalysisCaches(nextCurrentResult, history);
   dispatchAnalysisEvent();
 }
 

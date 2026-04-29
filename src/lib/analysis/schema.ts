@@ -126,8 +126,34 @@ export const analysisConversationSchema = z.object({
   generatedAt: z.string(),
 });
 
+export const replayPreparationSchema = z.object({
+  job_id: z.string(),
+  match_id: z.string(),
+  status: z.string(),
+  detail: z.string(),
+  error: z.string().nullable().optional(),
+});
+
+export const matchSummarySchema = z.object({
+  match_id: z.string(),
+  title: z.string(),
+  duration_seconds: z.number().nullable().optional(),
+  duration_text: z.string().default(""),
+  start_time: z.number().nullable().optional(),
+  winner: z.string().nullable().optional(),
+  radiant_score: z.number().nullable().optional(),
+  dire_score: z.number().nullable().optional(),
+  radiant_team: z.string().default("Radiant"),
+  dire_team: z.string().default("Dire"),
+  radiant_lineup: z.array(z.string()).default([]),
+  dire_lineup: z.array(z.string()).default([]),
+  players: z.array(z.record(z.string(), z.unknown())).default([]),
+});
+
 export type TimelineEvent = z.infer<typeof timelineEventSchema>;
 export type AnalysisRequest = z.infer<typeof analysisRequestSchema>;
 export type AnalysisReportPayload = z.infer<typeof analysisReportPayloadSchema>;
 export type AnalysisReport = z.infer<typeof analysisReportSchema>;
 export type AnalysisConversation = z.infer<typeof analysisConversationSchema>;
+export type ReplayPreparation = z.infer<typeof replayPreparationSchema>;
+export type MatchSummary = z.infer<typeof matchSummarySchema>;

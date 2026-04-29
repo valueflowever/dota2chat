@@ -1,8 +1,52 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/analyze/route";
 
 describe("POST /api/analyze", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          matchId?: string;
+          focusQuestion: string;
+        };
+        const isReplay = Boolean(body.matchId?.trim());
+
+        return Response.json({
+          conversation: {
+            mode: isReplay ? "match-replay" : "game-question",
+            title: isReplay ? `比赛 ${body.matchId}` : "游戏问题",
+            summary: "快速结论",
+            messages: [
+              {
+                id: "user-entry",
+                role: "user",
+                content: body.matchId || body.focusQuestion,
+              },
+              {
+                id: "assistant-entry",
+                role: "assistant",
+                content: "先说结论：测试回答",
+              },
+            ],
+            followUps: [
+              { question: "追问 1", answer: "回答 1" },
+              { question: "追问 2", answer: "回答 2" },
+              { question: "追问 3", answer: "回答 3" },
+            ],
+            source: "demo-engine",
+            generatedAt: new Date().toISOString(),
+          },
+        });
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("returns a replay conversation for a valid match-style payload", async () => {
     const response = await POST(
       new Request("http://localhost/api/analyze", {

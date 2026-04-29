@@ -63,6 +63,31 @@ const matchConversation: AnalysisConversation = {
   ],
 };
 
+function createFollowUpResponse(answer: string) {
+  return new Response(
+    JSON.stringify({
+      conversation: {
+        ...matchConversation,
+        messages: [
+          ...matchConversation.messages,
+          {
+            id: `assistant-${answer}`,
+            role: "assistant",
+            content: answer,
+          },
+        ],
+        followUps: matchConversation.followUps,
+      },
+    }),
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    },
+  ) as unknown as Response;
+}
+
 describe("ResultView", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -129,30 +154,57 @@ describe("ResultView", () => {
 
   it("sends a suggested question as a real chat turn", async () => {
     const user = userEvent.setup();
+    const targetFollowUp = matchConversation.followUps[1];
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      createFollowUpResponse("backend answer for suggested question"),
+    );
 
     render(<ResultView request={baseRequest} conversation={matchConversation} />);
 
-    await user.click(screen.getByRole("button", { name: "我最大的失误是什么？" }));
+    await user.click(screen.getByRole("button", { name: targetFollowUp.question }));
 
-    expect(screen.getAllByText("我最大的失误是什么？")).toHaveLength(2);
-    expect(
-      screen.getByText("最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。"),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("backend answer for suggested question")).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByText(targetFollowUp.question)).toHaveLength(2);
+    expect(screen.queryByText(targetFollowUp.answer)).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(requestBody.matchId).toBe("8724913167");
+    expect(requestBody.focusQuestion).toBe(targetFollowUp.question);
   });
 
   it("does not reuse message keys when the same suggested question is sent twice", async () => {
     const user = userEvent.setup();
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const targetFollowUp = matchConversation.followUps[1];
+
+    vi.spyOn(global, "fetch")
+      .mockResolvedValueOnce(createFollowUpResponse("backend answer 1"))
+      .mockResolvedValueOnce(createFollowUpResponse("backend answer 2"));
 
     render(<ResultView request={baseRequest} conversation={matchConversation} />);
 
-    await user.click(screen.getByRole("button", { name: "我最大的失误是什么？" }));
-    await user.click(screen.getByRole("button", { name: "我最大的失误是什么？" }));
+    await user.click(screen.getByRole("button", { name: targetFollowUp.question }));
 
-    expect(screen.getAllByText("我最大的失误是什么？")).toHaveLength(3);
-    expect(
-      screen.getAllByText("最大的失误不是某一拍按慢了，而是把关键资源点当成临场反应题去打。"),
-    ).toHaveLength(2);
+    await waitFor(() => {
+      expect(screen.getByText("backend answer 1")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: targetFollowUp.question }));
+
+    await waitFor(() => {
+      expect(screen.getByText("backend answer 2")).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByText(targetFollowUp.question)).toHaveLength(3);
     expect(
       consoleErrorSpy.mock.calls.some((call) =>
         call.some(
@@ -265,5 +317,50 @@ describe("ResultView", () => {
 
     expect(requestBody.matchId).toBe("8724913167");
     expect(requestBody.focusQuestion).toBe("这局高地前到底哪里脱节了？");
+  });
+
+  it("shows an actionable message when replay parsing fails because the parser is offline", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          job: {
+            job_id: "job-parser-offline",
+            match_id: "8724913167",
+            status: "failed",
+            detail: "Replay pipeline failed.",
+            error:
+              "Parser is not running. Start OpenDota parser on DOTA2_PARSER_URL or set DOTA2_AUTO_START_PARSER=true.",
+          },
+          matchSummary: null,
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ) as unknown as Response,
+    );
+
+    render(
+      <ResultView
+        request={baseRequest}
+        conversation={matchConversation}
+        replayJob={{
+          job_id: "job-parser-offline",
+          match_id: "8724913167",
+          status: "running",
+          detail: "Replay download/parse pipeline is running.",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("录像解析：解析失败")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/录像解析器服务未启动/u)).toBeInTheDocument();
+    expect(screen.getByText(/DOTA2_AUTO_START_PARSER=true/u)).toBeInTheDocument();
+    expect(screen.queryByText("录像解析失败，请稍后重试或检查后端服务。")).toBeNull();
   });
 });

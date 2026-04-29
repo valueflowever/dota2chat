@@ -223,6 +223,35 @@ describe("AnalysisWorkspace", () => {
     expect((textarea as HTMLTextAreaElement).value).toContain("Roshan");
   });
 
+  it("submits an empty-state quick question directly to the backend", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      createConversationResponse("question", "quick question backend answer"),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+    const quickQuestion = container.querySelector(
+      ".chat-empty-example",
+    ) as HTMLButtonElement;
+    const questionText = quickQuestion.textContent ?? "";
+
+    await user.click(quickQuestion);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("quick question backend answer").length).toBeGreaterThan(0);
+    });
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestBody.matchId).toBe("");
+    expect(requestBody.focusQuestion).toBe(questionText);
+  });
+
   it("loads a replay id from the sidebar and records it in history", async () => {
     const user = userEvent.setup();
     vi.spyOn(global, "fetch").mockResolvedValue(
