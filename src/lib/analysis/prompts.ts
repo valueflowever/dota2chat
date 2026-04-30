@@ -97,6 +97,22 @@ function formatOptionalLine(label: string, value: string) {
   return `- ${label}: ${value}`;
 }
 
+function formatPlayerSide(value: AnalysisRequest["playerSide"]) {
+  if (value === "radiant") {
+    return "Radiant / 天辉";
+  }
+
+  if (value === "dire") {
+    return "Dire / 夜魇";
+  }
+
+  return "";
+}
+
+function formatPlayerPosition(value: AnalysisRequest["playerPosition"]) {
+  return value ? `${value}号位` : "";
+}
+
 function formatTimeline(input: AnalysisRequest) {
   if (!input.timeline.length) {
     return "- No explicit timeline events were supplied.";
@@ -132,6 +148,8 @@ export function buildAnalysisPrompt(input: AnalysisRequest): PromptBundle {
     formatOptionalLine("Context Summary", input.contextSummary),
     formatOptionalLine("Skill Bracket", input.skillBracket),
     formatOptionalLine("Role", input.role),
+    formatOptionalLine("Player Side", formatPlayerSide(input.playerSide)),
+    formatOptionalLine("Player Position", formatPlayerPosition(input.playerPosition)),
     formatOptionalLine("Lane Or Review Lens", input.lane),
     formatOptionalLine("Match Title", input.matchTitle),
     formatOptionalLine("Patch", input.patch),
@@ -177,6 +195,8 @@ export function buildQuickQuestionPrompt(input: AnalysisRequest): PromptBundle {
     formatOptionalLine("Extra Context", input.contextSummary),
     formatOptionalLine("Skill Bracket", input.skillBracket),
     formatOptionalLine("Role", input.role),
+    formatOptionalLine("Player Side", formatPlayerSide(input.playerSide)),
+    formatOptionalLine("Player Position", formatPlayerPosition(input.playerPosition)),
     formatOptionalLine("Patch", input.patch),
     "",
     "Output Expectations",

@@ -223,6 +223,40 @@ describe("AnalysisWorkspace", () => {
     expect((textarea as HTMLTextAreaElement).value).toContain("Roshan");
   });
 
+  it("submits selected player side and position with the first prompt", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      createConversationResponse("question", "context-aware backend answer"),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+
+    await user.click(
+      container.querySelector(".icon-action-button-minimal") as HTMLButtonElement,
+    );
+    await user.selectOptions(screen.getByLabelText("我方阵营"), "dire");
+    await user.selectOptions(screen.getByLabelText("我的位置"), "3");
+    await user.type(
+      container.querySelector("#entry-input") as HTMLInputElement,
+      "团战该怎么站位？",
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(requestBody.playerSide).toBe("dire");
+    expect(requestBody.playerPosition).toBe("3");
+    expect(requestBody.focusQuestion).toBe("团战该怎么站位？");
+  });
+
   it("submits an empty-state quick question directly to the backend", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
@@ -282,6 +316,47 @@ describe("AnalysisWorkspace", () => {
 
     expect(container.querySelectorAll(".chat-history-item").length).toBeGreaterThan(0);
     expect(localStorage.getItem("ancient-lens-analysis-history")).toContain("8123456789");
+  });
+
+  it("opens a replay chat immediately while the backend queues processing", async () => {
+    const user = userEvent.setup();
+    let resolveFetch: ((response: Response) => void) | undefined;
+    vi.spyOn(global, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+    const replayInput = container.querySelector(
+      "#replay-loader-input",
+    ) as HTMLInputElement;
+    const replaySubmit = container.querySelector(
+      ".chat-history-loader-button",
+    ) as HTMLButtonElement;
+
+    await user.type(replayInput, "8123456789");
+    await user.click(replaySubmit);
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("main")).getAllByText(/录像正在后台处理/u).length,
+      ).toBeGreaterThan(0);
+    });
+
+    expect(container.querySelectorAll(".chat-history-item")).toHaveLength(1);
+
+    resolveFetch?.(
+      createConversationResponse("8123456789", "backend replay is ready"),
+    );
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("main")).getByText("backend replay is ready"),
+      ).toBeInTheDocument();
+    });
+
+    expect(container.querySelectorAll(".chat-history-item")).toHaveLength(1);
   });
 
   it("keeps history and clears the active conversation when starting a new chat", async () => {

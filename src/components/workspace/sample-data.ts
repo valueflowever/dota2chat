@@ -75,6 +75,8 @@ export const defaultDraft: AnalysisRequest = {
   contextSummary: "",
   skillBracket: "",
   role: "",
+  playerSide: "",
+  playerPosition: "",
   lane: "",
   matchTitle: "",
   patch: "",

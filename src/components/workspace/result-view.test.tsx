@@ -13,6 +13,8 @@ const baseRequest: AnalysisRequest = {
   contextSummary: "",
   skillBracket: "",
   role: "",
+  playerSide: "",
+  playerPosition: "",
   lane: "",
   matchTitle: "",
   patch: "",
@@ -108,7 +110,7 @@ describe("ResultView", () => {
     expect(screen.getByText("首轮复盘")).toBeInTheDocument();
     expect(screen.getByText("当前分析")).toBeInTheDocument();
     expect(screen.getByText("录像复盘")).toBeInTheDocument();
-    expect(screen.getByText("demo-engine")).toBeInTheDocument();
+    expect(screen.getByText("本地兜底")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "这局为什么会输？" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "下一把先改什么？" })).toBeInTheDocument();
     expect(screen.getByLabelText("继续追问")).toBeInTheDocument();
@@ -148,6 +150,11 @@ describe("ResultView", () => {
     expect(container.querySelector(".analysis-chat-send-soft")).not.toBeNull();
     expect(container.querySelector(".analysis-chat-suggestions")).not.toBeNull();
     expect(container.querySelector(".analysis-chat-suggestion-block")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-suggestion-head")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-suggestion-question")).not.toBeNull();
+    expect(container.querySelector(".analysis-chat-suggestion-preview")).not.toBeNull();
+    expect(screen.getByText("下一步方案")).toBeInTheDocument();
+    expect(screen.getByText("方案 1")).toBeInTheDocument();
     expect(screen.queryByText("关键事件速览")).not.toBeInTheDocument();
     expect(screen.queryByText("阶段复盘矩阵")).not.toBeInTheDocument();
   });
@@ -168,7 +175,9 @@ describe("ResultView", () => {
     });
 
     expect(screen.getAllByText(targetFollowUp.question)).toHaveLength(2);
-    expect(screen.queryByText(targetFollowUp.answer)).not.toBeInTheDocument();
+    expect(screen.getByText(targetFollowUp.answer)).toHaveClass(
+      "analysis-chat-suggestion-preview",
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const firstRequest = fetchMock.mock.calls[0]?.[1];
@@ -179,6 +188,9 @@ describe("ResultView", () => {
 
     expect(requestBody.matchId).toBe("8724913167");
     expect(requestBody.focusQuestion).toBe(targetFollowUp.question);
+    expect(requestBody.contextSummary).toContain("连续追问");
+    expect(requestBody.contextSummary).toContain("先说结论");
+    expect(requestBody.contextSummary).toContain(targetFollowUp.question);
   });
 
   it("does not reuse message keys when the same suggested question is sent twice", async () => {
@@ -265,6 +277,30 @@ describe("ResultView", () => {
     ).toBe(false);
   });
 
+  it("normalizes legacy array-string assistant messages before rendering", () => {
+    render(
+      <ResultView
+        request={baseRequest}
+        conversation={{
+          ...matchConversation,
+          messages: [
+            matchConversation.messages[0],
+            {
+              id: "assistant-array-string",
+              role: "assistant",
+              content: "['一、已确认的硬证据', '', '- 比分 18:37，时长 29:37。']",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("一、已确认的硬证据")).toBeInTheDocument();
+    expect(screen.getByText("18:37")).toBeInTheDocument();
+    expect(screen.getByText("29:37")).toBeInTheDocument();
+    expect(screen.queryByText(/^\['一、已确认/u)).toBeNull();
+  });
+
   it("submits a typed follow-up through the analysis API and appends the response", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
@@ -317,6 +353,9 @@ describe("ResultView", () => {
 
     expect(requestBody.matchId).toBe("8724913167");
     expect(requestBody.focusQuestion).toBe("这局高地前到底哪里脱节了？");
+    expect(requestBody.contextSummary).toContain("连续追问");
+    expect(requestBody.contextSummary).toContain("先说结论");
+    expect(requestBody.contextSummary).toContain("这局高地前到底哪里脱节了？");
   });
 
   it("shows an actionable message when replay parsing fails because the parser is offline", async () => {

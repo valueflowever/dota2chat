@@ -36,20 +36,48 @@ type AnalyzeApiResponse = {
 const ADVANCED_OPTIONS_LABEL = "设置";
 const ENTRY_LABEL = "比赛 ID 或问题";
 const FOCUS_QUESTION_LABEL = "补充说明";
+const PLAYER_SIDE_LABEL = "我方阵营";
+const PLAYER_POSITION_LABEL = "我的位置";
 const DEFAULT_REPLAY_QUESTION =
   "请分析这场比赛的整体节奏、关键转折点，以及下一把最值得优先修正的一项动作。";
+const REPLAY_PROCESSING_ESTIMATE =
+  "预计 1-3 分钟；如果需要下载录像或解析服务刚启动，可能会更久。";
 const EMPTY_HISTORY: ReturnType<typeof getAnalysisHistorySnapshot> = [];
+
+const PLAYER_SIDE_OPTIONS: Array<{
+  value: AnalysisRequest["playerSide"];
+  label: string;
+}> = [
+  { value: "", label: "未选择" },
+  { value: "radiant", label: "天辉" },
+  { value: "dire", label: "夜魇" },
+];
+
+const PLAYER_POSITION_OPTIONS: Array<{
+  value: AnalysisRequest["playerPosition"];
+  label: string;
+}> = [
+  { value: "", label: "未选择" },
+  { value: "1", label: "1 号位" },
+  { value: "2", label: "2 号位" },
+  { value: "3", label: "3 号位" },
+  { value: "4", label: "4 号位" },
+  { value: "5", label: "5 号位" },
+];
 
 const EXAMPLE_PROMPTS = [
   "我中单总在 7-12 分钟掉节奏，怎么修？",
   "Roshan 前 20 秒该干什么？",
   "团战阵容怎么打才不会乱？",
+  "辅助前 5 分钟怎么保大核不被压崩？",
+  "帮我复盘这场比赛，找一下高地前脱节的原因",
 ] as const;
 
 function cloneRequest(request: AnalysisRequest): AnalysisRequest {
   return {
+    ...defaultDraft,
     ...request,
-    timeline: request.timeline.map((event) => ({ ...event })),
+    timeline: (request.timeline ?? []).map((event) => ({ ...event })),
   };
 }
 
@@ -75,6 +103,50 @@ function prepareSubmission(entryText: string, draft: AnalysisRequest): AnalysisR
 
 function buildHistoryLabel(title: string) {
   return title.trim() || "未命名对话";
+}
+
+function buildReplayProcessingConversation(
+  request: AnalysisRequest,
+): AnalysisConversation {
+  const matchId = request.matchId.trim();
+
+  return {
+    mode: "match-replay",
+    title: `比赛 ${matchId}`,
+    summary: "录像处理中",
+    source: "demo-engine",
+    generatedAt: new Date().toISOString(),
+    messages: [
+      {
+        id: "user-entry",
+        role: "user",
+        content: matchId,
+      },
+      {
+        id: "assistant-entry",
+        role: "assistant",
+        content: [
+          `已收到比赛 ${matchId}，我先把对话打开。`,
+          `录像正在后台处理，${REPLAY_PROCESSING_ESTIMATE}`,
+          "数据准备好之前，我不会编造这局的时间点、经济差或具体操作。处理完成后回到这条对话，就能继续基于这场比赛复盘。",
+        ].join("\n\n"),
+      },
+    ],
+    followUps: [
+      {
+        question: "大概多久能好？",
+        answer: REPLAY_PROCESSING_ESTIMATE,
+      },
+      {
+        question: "处理好后怎么继续？",
+        answer: "回到这条对话即可。录像数据准备好后，继续问这场比赛的问题，会直接读取对应录像数据。",
+      },
+      {
+        question: "现在会不会编造细节？",
+        answer: "不会。未解析完成前只显示处理状态，不会把通用建议包装成这场比赛的结论。",
+      },
+    ],
+  };
 }
 
 export function AnalysisWorkspace() {
@@ -159,10 +231,36 @@ export function AnalysisWorkspace() {
     }));
   }
 
+  function updatePlayerSide(value: AnalysisRequest["playerSide"]) {
+    setDraft((current) => ({
+      ...current,
+      playerSide: value,
+    }));
+  }
+
+  function updatePlayerPosition(value: AnalysisRequest["playerPosition"]) {
+    setDraft((current) => ({
+      ...current,
+      playerPosition: value,
+    }));
+  }
+
   async function submitPreparedRequest(preparedRequest: AnalysisRequest) {
     if (isSubmitting) {
       return;
     }
+
+    const optimisticResult = preparedRequest.matchId.trim()
+      ? saveAnalysisResult({
+          request: preparedRequest,
+          result: {
+            conversation: buildReplayProcessingConversation(preparedRequest),
+            warning: `录像正在后台处理，${REPLAY_PROCESSING_ESTIMATE}`,
+            replayJob: null,
+            matchSummary: null,
+          },
+        })
+      : null;
 
     setIsSubmitting(true);
 
@@ -186,18 +284,59 @@ export function AnalysisWorkspace() {
       if (!response.ok) {
         setFieldErrors(payload?.fieldErrors ?? {});
         setRequestError(payload?.error ?? "分析请求失败，请检查输入后重试。");
+        if (optimisticResult) {
+          saveAnalysisResult({
+            id: optimisticResult.id,
+            request: preparedRequest,
+            result: {
+              conversation: {
+                ...optimisticResult.result.conversation,
+                summary: "请求失败",
+                messages: [
+                  optimisticResult.result.conversation.messages[0],
+                  {
+                    id: "assistant-entry",
+                    role: "assistant",
+                    content:
+                      payload?.error ??
+                      "录像处理请求失败了。请稍后重试，或检查后端服务是否可用。",
+                  },
+                ],
+              },
+              warning: payload?.error ?? "录像处理请求失败。",
+              replayJob: null,
+              matchSummary: null,
+            },
+          });
+        }
         return;
       }
 
       if (!payload) {
         setFieldErrors({});
         setRequestError("对话结果解析失败，请稍后再试。");
+        if (optimisticResult) {
+          saveAnalysisResult({
+            id: optimisticResult.id,
+            request: preparedRequest,
+            result: {
+              conversation: {
+                ...optimisticResult.result.conversation,
+                summary: "请求失败",
+              },
+              warning: "对话结果解析失败，请稍后再试。",
+              replayJob: null,
+              matchSummary: null,
+            },
+          });
+        }
         return;
       }
 
       setFieldErrors({});
       setRequestError("");
       saveAnalysisResult({
+        id: optimisticResult?.id,
         request: preparedRequest,
         result: {
           conversation: payload.conversation,
@@ -209,6 +348,21 @@ export function AnalysisWorkspace() {
     } catch {
       setFieldErrors({});
       setRequestError("暂时无法生成对话结果，请稍后再试。");
+      if (optimisticResult) {
+        saveAnalysisResult({
+          id: optimisticResult.id,
+          request: preparedRequest,
+          result: {
+            conversation: {
+              ...optimisticResult.result.conversation,
+              summary: "请求失败",
+            },
+            warning: "暂时无法连接后端，但这条对话已保留。请稍后重新加载这个比赛编号。",
+            replayJob: null,
+            matchSummary: null,
+          },
+        });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -325,10 +479,11 @@ export function AnalysisWorkspace() {
               {history.length ? (
                 history.map((entry) => {
                   const active = currentResult?.id === entry.id;
-                  const lastMessage =
-                    entry.result.conversation.messages[
-                      entry.result.conversation.messages.length - 1
-                    ]?.content || "";
+                  const preview =
+                    entry.result.conversation.summary.trim() ||
+                    (entry.result.conversation.messages[0]?.content.slice(0, 80) +
+                      "…") ||
+                    "";
 
                   return (
                     <div
@@ -349,7 +504,7 @@ export function AnalysisWorkspace() {
                         <span className="chat-history-item-title">
                           {buildHistoryLabel(entry.result.conversation.title)}
                         </span>
-                        <span className="chat-history-item-preview">{lastMessage}</span>
+                        <span className="chat-history-item-preview">{preview}</span>
                       </button>
                       <button
                         type="button"
@@ -478,6 +633,48 @@ export function AnalysisWorkspace() {
 
               {showAdvanced ? (
                 <div className="advanced-panel advanced-panel-home advanced-panel-home-minimal chat-empty-settings-panel">
+                  <div className="player-context-grid">
+                    <label className="player-context-field">
+                      <span className="form-label">{PLAYER_SIDE_LABEL}</span>
+                      <select
+                        aria-label={PLAYER_SIDE_LABEL}
+                        value={draft.playerSide}
+                        onChange={(event) =>
+                          updatePlayerSide(
+                            event.target.value as AnalysisRequest["playerSide"],
+                          )
+                        }
+                        className="form-input player-context-select"
+                      >
+                        {PLAYER_SIDE_OPTIONS.map((option) => (
+                          <option key={option.value || "unset"} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="player-context-field">
+                      <span className="form-label">{PLAYER_POSITION_LABEL}</span>
+                      <select
+                        aria-label={PLAYER_POSITION_LABEL}
+                        value={draft.playerPosition}
+                        onChange={(event) =>
+                          updatePlayerPosition(
+                            event.target.value as AnalysisRequest["playerPosition"],
+                          )
+                        }
+                        className="form-input player-context-select"
+                      >
+                        {PLAYER_POSITION_OPTIONS.map((option) => (
+                          <option key={option.value || "unset"} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
                   <label className="grid gap-2">
                     <span className="form-label">{FOCUS_QUESTION_LABEL}</span>
                     <textarea

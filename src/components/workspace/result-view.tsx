@@ -1,8 +1,8 @@
 "use client";
 
-import { SendHorizontal } from "lucide-react";
+import { ChevronRight, Copy, SendHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AnalysisConversation,
@@ -12,6 +12,9 @@ import type {
 } from "@/lib/analysis/schema";
 
 const INPUT_MAX_HEIGHT_PX = 180;
+const FOLLOW_UP_CONTEXT_MAX_LENGTH = 1900;
+const EXISTING_CONTEXT_MAX_LENGTH = 360;
+const MESSAGE_CONTEXT_MAX_LENGTH = 220;
 
 function renderInlineSegments(text: string, keyPrefix: string): ReactNode {
   if (!text) {
@@ -19,7 +22,7 @@ function renderInlineSegments(text: string, keyPrefix: string): ReactNode {
   }
 
   const segments: ReactNode[] = [];
-  const pattern = /\*\*([^*]+)\*\*|`([^`]+)`/g;
+  const pattern = /\*\*([^*]+)\*\*|`([^`]+)`|(\b\d{1,2}:\d{2}\b)/g;
   let cursor = 0;
   let counter = 0;
   let match: RegExpExecArray | null;
@@ -46,6 +49,15 @@ function renderInlineSegments(text: string, keyPrefix: string): ReactNode {
         >
           {match[2]}
         </code>,
+      );
+    } else if (match[3]) {
+      segments.push(
+        <span
+          key={`${keyPrefix}-t-${counter++}`}
+          className="analysis-chat-time-tag"
+        >
+          {match[3]}
+        </span>,
       );
     }
 
@@ -229,6 +241,26 @@ function formatReplayJobStatus(status: string) {
   return status;
 }
 
+function formatConversationSource(source: AnalysisConversation["source"]) {
+  return source === "live-ai" ? "AI 教练" : "本地兜底";
+}
+
+function formatPlayerSideContext(side: AnalysisRequest["playerSide"]) {
+  if (side === "radiant") {
+    return "天辉";
+  }
+
+  if (side === "dire") {
+    return "夜魇";
+  }
+
+  return "";
+}
+
+function formatPlayerPositionContext(position: AnalysisRequest["playerPosition"]) {
+  return position ? `${position}号位` : "";
+}
+
 function formatReplayJobDetail(job: ReplayPreparation) {
   if (job.status === "queued") {
     return "已加入解析队列，系统会自动下载并解析录像。";
@@ -239,7 +271,7 @@ function formatReplayJobDetail(job: ReplayPreparation) {
   }
 
   if (job.status === "completed") {
-    return "录像解析已完成，现在可以重新分析并读取 timeslices。";
+    return "录像解析已完成，现在可以重新分析并读取完整录像数据。";
   }
 
   if (job.status === "failed") {
@@ -279,19 +311,98 @@ function createTurnId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function parseStringArrayLiteral(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+      return parsed;
+    }
+  } catch {
+    // Fall through to Python-style single-quoted list parsing.
+  }
+
+  const items: string[] = [];
+  let index = 1;
+
+  while (index < trimmed.length - 1) {
+    while (/[\s,]/.test(trimmed[index] ?? "") && index < trimmed.length - 1) {
+      index += 1;
+    }
+
+    const quote = trimmed[index];
+    if (quote !== "'" && quote !== '"') {
+      return null;
+    }
+
+    index += 1;
+    let item = "";
+
+    while (index < trimmed.length - 1) {
+      const character = trimmed[index];
+
+      if (character === "\\") {
+        const next = trimmed[index + 1];
+        if (next === undefined) {
+          return null;
+        }
+        item += next;
+        index += 2;
+        continue;
+      }
+
+      if (character === quote) {
+        index += 1;
+        break;
+      }
+
+      item += character;
+      index += 1;
+    }
+
+    items.push(item);
+
+    while (/\s/.test(trimmed[index] ?? "") && index < trimmed.length - 1) {
+      index += 1;
+    }
+
+    if (trimmed[index] === ",") {
+      index += 1;
+    }
+  }
+
+  return items.length ? items : null;
+}
+
+function normalizeConversationContent(content: string) {
+  const parsed = parseStringArrayLiteral(content);
+  return parsed ? parsed.join("\n").trim() : content;
+}
+
 function sanitizeMessages(messages: AnalysisConversation["messages"]) {
   const seenIds = new Set<string>();
   let changed = false;
 
   const nextMessages = messages.map((message) => {
     const normalizedId = message.id?.trim() || createTurnId(`message-${message.role}`);
+    const normalizedContent = normalizeConversationContent(message.content);
+    const contentChanged = normalizedContent !== message.content;
+    const idChanged = !message.id?.trim() || seenIds.has(normalizedId);
 
-    if (!message.id?.trim() || seenIds.has(normalizedId)) {
+    if (idChanged || contentChanged) {
       changed = true;
+      const nextId = idChanged ? createTurnId(`message-${message.role}`) : message.id;
+      seenIds.add(nextId);
 
       return {
         ...message,
-        id: createTurnId(`message-${message.role}`),
+        id: nextId,
+        content: normalizedContent,
       };
     }
 
@@ -303,6 +414,102 @@ function sanitizeMessages(messages: AnalysisConversation["messages"]) {
     messages: nextMessages,
     changed,
   };
+}
+
+function buildFollowUpPreview(answer: string) {
+  const normalized = normalizeConversationContent(answer).replace(/\s+/g, " ").trim();
+
+  if (normalized.length <= 86) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 86)}...`;
+}
+
+function compactContextText(value: string, maxLength: number) {
+  const normalized = normalizeConversationContent(value).replace(/\s+/g, " ").trim();
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function limitContextSummary(value: string) {
+  const trimmed = value.trim();
+
+  if (trimmed.length <= FOLLOW_UP_CONTEXT_MAX_LENGTH) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, FOLLOW_UP_CONTEXT_MAX_LENGTH - 3)}...`;
+}
+
+function buildMatchSummaryContext(summary?: MatchSummary | null) {
+  if (!summary) {
+    return "";
+  }
+
+  const scoreKnown = summary.radiant_score != null || summary.dire_score != null;
+  const score = scoreKnown
+    ? `${summary.radiant_team} ${summary.radiant_score ?? "-"} : ${
+        summary.dire_score ?? "-"
+      } ${summary.dire_team}`
+    : "";
+
+  return [
+    `比赛：${summary.title}`,
+    score ? `比分：${score}` : "",
+    summary.duration_text ? `时长：${summary.duration_text}` : "",
+    `结果：${formatWinner(summary)}`,
+    `Radiant 阵容：${formatLineup(summary.radiant_lineup)}`,
+    `Dire 阵容：${formatLineup(summary.dire_lineup)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildFollowUpContextSummary({
+  request,
+  messages,
+  question,
+  matchSummary,
+}: {
+  request: AnalysisRequest;
+  messages: AnalysisConversation["messages"];
+  question: string;
+  matchSummary?: MatchSummary | null;
+}) {
+  const previousContext = request.contextSummary.trim()
+    ? `用户原始补充：${compactContextText(
+        request.contextSummary,
+        EXISTING_CONTEXT_MAX_LENGTH,
+      )}`
+    : "";
+  const matchContext = buildMatchSummaryContext(matchSummary);
+  const recentMessages = messages
+    .slice(-6)
+    .map((message) => {
+      const speaker = message.role === "assistant" ? "助手" : "用户";
+      return `${speaker}：${compactContextText(
+        message.content,
+        MESSAGE_CONTEXT_MAX_LENGTH,
+      )}`;
+    })
+    .filter((line) => line.trim().length > 0);
+
+  const context = [
+    previousContext,
+    "这是同一条复盘对话里的连续追问。请承接已有对话，不要把本轮问题当成孤立泛问题，也不要回答“你没有提供上下文”。",
+    matchContext ? `当前比赛信息：\n${matchContext}` : "",
+    recentMessages.length ? `已有对话：\n${recentMessages.join("\n")}` : "",
+    `本轮追问：${question}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return limitContextSummary(context);
 }
 
 export function ResultView({
@@ -333,6 +540,7 @@ export function ResultView({
     currentMatchSummary,
     onConversationChange,
   });
+  const autoLoadedReplayJobIdsRef = useRef<Set<string>>(new Set());
   const replayJobId = currentReplayJob?.job_id ?? "";
   const replayJobStatus = currentReplayJob?.status ?? "";
 
@@ -360,6 +568,59 @@ export function ResultView({
       onConversationChange,
     };
   }, [conversation, currentMatchSummary, onConversationChange, warning]);
+
+  const loadCompletedReplayAnalysis = useCallback(async (
+    job: ReplayPreparation,
+    fallbackMatchSummary?: MatchSummary | null,
+  ) => {
+    const matchId = request.matchId.trim();
+    const loadKey = job.job_id || job.match_id || matchId;
+
+    if (!matchId || autoLoadedReplayJobIdsRef.current.has(loadKey)) {
+      return;
+    }
+
+    autoLoadedReplayJobIdsRef.current.add(loadKey);
+
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+      });
+      const payload = (await response.json()) as {
+        conversation?: AnalysisConversation;
+        warning?: string;
+        replayJob?: ReplayPreparation | null;
+        matchSummary?: MatchSummary | null;
+      };
+
+      if (!response.ok || !payload.conversation) {
+        throw new Error("Replay analysis refresh failed.");
+      }
+
+      const sanitizedPayloadMessages = sanitizeMessages(payload.conversation.messages);
+      const nextReplayJob =
+        "replayJob" in payload ? payload.replayJob ?? job : job;
+      const nextMatchSummary =
+        payload.matchSummary ?? fallbackMatchSummary ?? currentMatchSummary;
+
+      setMessages(sanitizedPayloadMessages.messages);
+      setFollowUps(payload.conversation.followUps);
+      setCurrentReplayJob(nextReplayJob);
+      setCurrentMatchSummary(nextMatchSummary);
+      setJobPollError("");
+      onConversationChange?.(payload.conversation, payload.warning ?? "", {
+        replayJob: nextReplayJob,
+        matchSummary: nextMatchSummary,
+      });
+    } catch {
+      autoLoadedReplayJobIdsRef.current.delete(loadKey);
+      setJobPollError("录像已完成处理，但自动加载复盘失败。请重新提交这个比赛编号。");
+    }
+  }, [currentMatchSummary, onConversationChange, request]);
 
   useEffect(() => {
     if (!sanitizedIncomingMessages.changed) {
@@ -440,6 +701,8 @@ export function ResultView({
 
         if (isReplayJobActive(nextJob)) {
           timer = setTimeout(pollJob, 3000);
+        } else if (nextJob.status === "completed") {
+          void loadCompletedReplayAnalysis(nextJob, nextMatchSummary);
         }
       } catch {
         if (!cancelled) {
@@ -457,13 +720,23 @@ export function ResultView({
         clearTimeout(timer);
       }
     };
-  }, [replayJobId, replayJobStatus]);
+  }, [loadCompletedReplayAnalysis, replayJobId, replayJobStatus]);
+
+  useEffect(() => {
+    if (currentReplayJob?.status !== "completed") {
+      return;
+    }
+
+    void loadCompletedReplayAnalysis(currentReplayJob, currentMatchSummary);
+  }, [currentMatchSummary, currentReplayJob, loadCompletedReplayAnalysis]);
 
   const conversationModeLabel =
     conversation.mode === "match-replay" ? "录像复盘" : "问题分析";
   const conversationTitle = buildConversationTitle(request, conversation);
   const conversationSummary = buildConversationSummary(conversation);
   const generatedAtLabel = formatGeneratedAt(conversation.generatedAt);
+  const playerSideLabel = formatPlayerSideContext(request.playerSide);
+  const playerPositionLabel = formatPlayerPositionContext(request.playerPosition);
 
   async function submitQuestion(rawQuestion: string) {
     const question = rawQuestion.trim();
@@ -495,6 +768,12 @@ export function ResultView({
         body: JSON.stringify({
           ...request,
           focusQuestion: question,
+          contextSummary: buildFollowUpContextSummary({
+            request,
+            messages,
+            question,
+            matchSummary: currentMatchSummary,
+          }),
         }),
       });
 
@@ -572,7 +851,17 @@ export function ResultView({
                   比赛 {request.matchId.trim()}
                 </span>
               ) : null}
-              <span className="analysis-chat-context-chip">{conversation.source}</span>
+              {playerSideLabel ? (
+                <span className="analysis-chat-context-chip">{playerSideLabel}</span>
+              ) : null}
+              {playerPositionLabel ? (
+                <span className="analysis-chat-context-chip">
+                  {playerPositionLabel}
+                </span>
+              ) : null}
+              <span className="analysis-chat-context-chip">
+                {formatConversationSource(conversation.source)}
+              </span>
               {generatedAtLabel ? (
                 <span className="analysis-chat-context-chip">{generatedAtLabel}</span>
               ) : null}
@@ -583,18 +872,41 @@ export function ResultView({
         {warning ? <div className="warning-banner">{warning}</div> : null}
 
         {currentMatchSummary ? (
-          <section className="warning-banner" aria-label="比赛摘要">
-            <strong>{currentMatchSummary.title}</strong>
-            <div>
-              {currentMatchSummary.radiant_team} {currentMatchSummary.radiant_score ?? "-"} :{" "}
-              {currentMatchSummary.dire_score ?? "-"} {currentMatchSummary.dire_team}
+          <section className="match-summary-card" aria-label="比赛摘要">
+            <div className="match-summary-header">
+              <span className="match-summary-title">{currentMatchSummary.title}</span>
+              <span className="match-summary-duration">
+                {currentMatchSummary.duration_text || ""}
+              </span>
             </div>
-            <div>
+            <div className="match-summary-scoreboard">
+              <div className="match-summary-team match-summary-team-radiant">
+                <span className="match-summary-team-name">{currentMatchSummary.radiant_team}</span>
+                <span className="match-summary-score">{currentMatchSummary.radiant_score ?? "-"}</span>
+              </div>
+              <span className="match-summary-divider">:</span>
+              <div className="match-summary-team match-summary-team-dire">
+                <span className="match-summary-score">{currentMatchSummary.dire_score ?? "-"}</span>
+                <span className="match-summary-team-name">{currentMatchSummary.dire_team}</span>
+              </div>
+            </div>
+            <div className="match-summary-verdict">
               {formatWinner(currentMatchSummary)}
-              {currentMatchSummary.duration_text ? ` · ${currentMatchSummary.duration_text}` : ""}
             </div>
-            <div>Radiant：{formatLineup(currentMatchSummary.radiant_lineup)}</div>
-            <div>Dire：{formatLineup(currentMatchSummary.dire_lineup)}</div>
+            <div className="match-summary-lineups">
+              <div className="match-summary-lineup">
+                <span className="match-summary-lineup-label">Radiant</span>
+                <span className="match-summary-lineup-names">
+                  {formatLineup(currentMatchSummary.radiant_lineup)}
+                </span>
+              </div>
+              <div className="match-summary-lineup">
+                <span className="match-summary-lineup-label">Dire</span>
+                <span className="match-summary-lineup-names">
+                  {formatLineup(currentMatchSummary.dire_lineup)}
+                </span>
+              </div>
+            </div>
           </section>
         ) : null}
 
@@ -603,7 +915,7 @@ export function ResultView({
             <strong>录像解析：{formatReplayJobStatus(currentReplayJob.status)}</strong>
             <div>{formatReplayJobDetail(currentReplayJob)}</div>
             {isReplayJobActive(currentReplayJob) ? (
-              <div>解析完成后会自动同步比赛信息，再次分析即可读取 timeslices。</div>
+              <div>解析完成后会自动同步比赛信息，再次分析即可读取完整录像数据。</div>
             ) : null}
           </section>
         ) : null}
@@ -637,6 +949,22 @@ export function ResultView({
                     </p>
                   )}
                 </div>
+                {message.role === "assistant" ? (
+                  <div className="analysis-chat-message-actions">
+                    <button
+                      type="button"
+                      className="analysis-chat-action-copy"
+                      aria-label="复制回复"
+                      title="复制回复"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(message.content);
+                      }}
+                    >
+                      <Copy size={14} aria-hidden="true" />
+                      <span>复制</span>
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </article>
           ))}
@@ -669,15 +997,33 @@ export function ResultView({
 
       <div className="analysis-chat-dock analysis-chat-dock-blended analysis-chat-dock-integrated">
         <section className="analysis-chat-suggestion-block analysis-chat-suggestion-strip">
+          <div className="analysis-chat-suggestion-head">
+            <span className="analysis-chat-suggestion-title">下一步方案</span>
+            <span className="analysis-chat-suggestion-count">{followUps.length}</span>
+          </div>
           <div className="analysis-chat-suggestions">
-            {followUps.map((followUp) => (
+            {followUps.map((followUp, index) => (
               <button
-                key={followUp.question}
+                key={`${followUp.question}-${index}`}
                 type="button"
                 className="analysis-chat-suggestion"
+                aria-label={followUp.question}
                 onClick={() => void submitQuestion(followUp.question)}
               >
-                {followUp.question}
+                <span className="analysis-chat-suggestion-meta">
+                  方案 {index + 1}
+                </span>
+                <span className="analysis-chat-suggestion-question">
+                  {followUp.question}
+                </span>
+                <span className="analysis-chat-suggestion-preview">
+                  {buildFollowUpPreview(followUp.answer)}
+                </span>
+                <ChevronRight
+                  size={16}
+                  className="analysis-chat-suggestion-icon"
+                  aria-hidden="true"
+                />
               </button>
             ))}
           </div>

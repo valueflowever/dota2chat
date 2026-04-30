@@ -9,6 +9,8 @@ export const modeValues = [
 ] as const;
 export const toneValues = ["balanced", "direct", "blunt", "broadcast"] as const;
 export const conversationModeValues = ["match-replay", "game-question"] as const;
+export const playerSideValues = ["", "radiant", "dire"] as const;
+export const playerPositionValues = ["", "1", "2", "3", "4", "5"] as const;
 export const timelineTagValues = [
   "macro",
   "lane",
@@ -22,6 +24,8 @@ export const timelineTagValues = [
 export type AnalysisAudience = (typeof audienceValues)[number];
 export type AnalysisMode = (typeof modeValues)[number];
 export type AnalysisConversationMode = (typeof conversationModeValues)[number];
+export type PlayerSide = (typeof playerSideValues)[number];
+export type PlayerPosition = (typeof playerPositionValues)[number];
 export type TimelineTag = (typeof timelineTagValues)[number];
 
 export const timelineEventSchema = z.object({
@@ -39,6 +43,8 @@ export const analysisRequestSchema = z.object({
   contextSummary: z.string().trim().max(2000).default(""),
   skillBracket: z.string().trim().max(60).default(""),
   role: z.string().trim().max(60).default(""),
+  playerSide: z.enum(playerSideValues).default(""),
+  playerPosition: z.enum(playerPositionValues).default(""),
   lane: z.string().trim().max(60).default(""),
   matchTitle: z.string().trim().max(120).default(""),
   patch: z.string().trim().max(32).default(""),

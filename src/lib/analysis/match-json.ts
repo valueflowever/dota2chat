@@ -245,6 +245,8 @@ export function buildAudienceRequestFromMatchSeed(
         : audience === "coach"
           ? "captain / coach"
           : "analyst",
+    playerSide: "",
+    playerPosition: "",
     lane: audience === "creator" ? "storyline" : "macro",
     matchTitle: seed.title,
     patch: seed.patchLabel,

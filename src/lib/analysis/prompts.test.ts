@@ -12,6 +12,8 @@ const request: AnalysisRequest = {
     "17:50 烟雾抓人失败后，团队开始反复争夺敌方野区入口。22 分钟 Roshan 前站位拉散，Phoenix 大招没人保。",
   skillBracket: "",
   role: "",
+  playerSide: "",
+  playerPosition: "",
   lane: "",
   matchTitle: "",
   patch: "",
@@ -61,5 +63,16 @@ describe("buildAnalysisPrompt", () => {
     expect(prompt.system).toContain("content creator");
     expect(prompt.system).toContain("storyline");
     expect(prompt.system).not.toContain("solo ranked player");
+  });
+
+  it("passes player side and position as structured context when selected", () => {
+    const prompt = buildAnalysisPrompt({
+      ...request,
+      playerSide: "dire",
+      playerPosition: "4",
+    });
+
+    expect(prompt.user).toContain("Player Side: Dire / 夜魇");
+    expect(prompt.user).toContain("Player Position: 4号位");
   });
 });

@@ -14,6 +14,8 @@ describe("analysisRequestSchema", () => {
     expect(parsed.contextSummary).toBe("");
     expect(parsed.skillBracket).toBe("");
     expect(parsed.role).toBe("");
+    expect(parsed.playerSide).toBe("");
+    expect(parsed.playerPosition).toBe("");
     expect(parsed.timeline).toEqual([]);
   });
 });
