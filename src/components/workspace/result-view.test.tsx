@@ -100,7 +100,7 @@ describe("ResultView", () => {
       <ResultView
         request={baseRequest}
         conversation={matchConversation}
-        warning="OpenAI fallback warning"
+        warning="分析服务提示"
       />,
     );
 
@@ -110,12 +110,13 @@ describe("ResultView", () => {
     expect(screen.getByText("首轮复盘")).toBeInTheDocument();
     expect(screen.getByText("当前分析")).toBeInTheDocument();
     expect(screen.getByText("录像复盘")).toBeInTheDocument();
-    expect(screen.getByText("本地兜底")).toBeInTheDocument();
+    expect(screen.queryByText("本地兜底")).toBeNull();
+    expect(screen.queryByText("AI 教练")).toBeNull();
     expect(screen.getByRole("button", { name: "这局为什么会输？" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "下一把先改什么？" })).toBeInTheDocument();
     expect(screen.getByLabelText("继续追问")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
-    expect(screen.getByText("OpenAI fallback warning")).toBeInTheDocument();
+    expect(screen.getByText("分析服务提示")).toBeInTheDocument();
     expect(container.querySelector(".analysis-chat-app")).not.toBeNull();
     expect(container.querySelector(".analysis-chat-app-theme-notion")).not.toBeNull();
     expect(container.querySelector(".analysis-chat-app-theme-cool")).not.toBeNull();

@@ -241,10 +241,6 @@ function formatReplayJobStatus(status: string) {
   return status;
 }
 
-function formatConversationSource(source: AnalysisConversation["source"]) {
-  return source === "live-ai" ? "AI 教练" : "本地兜底";
-}
-
 function formatPlayerSideContext(side: AnalysisRequest["playerSide"]) {
   if (side === "radiant") {
     return "天辉";
@@ -859,9 +855,6 @@ export function ResultView({
                   {playerPositionLabel}
                 </span>
               ) : null}
-              <span className="analysis-chat-context-chip">
-                {formatConversationSource(conversation.source)}
-              </span>
               {generatedAtLabel ? (
                 <span className="analysis-chat-context-chip">{generatedAtLabel}</span>
               ) : null}

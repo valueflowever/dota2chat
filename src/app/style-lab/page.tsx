@@ -84,7 +84,7 @@ function PreviewCard({
             <div className={styles.previewContextBar}>
               <span className={styles.previewChip}>比赛 8123456789</span>
               <span className={styles.previewChip}>录像复盘</span>
-              <span className={styles.previewChip}>demo-engine</span>
+              <span className={styles.previewChip}>数据分析</span>
             </div>
 
             <div className={styles.previewMessages}>

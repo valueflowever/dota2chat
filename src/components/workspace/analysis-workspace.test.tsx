@@ -306,6 +306,8 @@ describe("AnalysisWorkspace", () => {
     await user.type(replayInput, "8123456789");
     await user.click(replaySubmit);
 
+    expect(replayInput.value).toBe("");
+
     await waitFor(() => {
       expect(
         within(screen.getByRole("main")).getByText(
@@ -338,6 +340,8 @@ describe("AnalysisWorkspace", () => {
     await user.type(replayInput, "8123456789");
     await user.click(replaySubmit);
 
+    expect(replayInput.value).toBe("");
+
     await waitFor(() => {
       expect(
         within(screen.getByRole("main")).getAllByText(/录像正在后台处理/u).length,
@@ -357,6 +361,50 @@ describe("AnalysisWorkspace", () => {
     });
 
     expect(container.querySelectorAll(".chat-history-item")).toHaveLength(1);
+  });
+
+  it("shows replay supplement in the initial processing chat before the backend responds", async () => {
+    const user = userEvent.setup();
+    let resolveFetch: ((response: Response) => void) | undefined;
+    vi.spyOn(global, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+    const supplement = "请重点看夜魇三号位中期掉点";
+
+    await user.click(
+      container.querySelector(".icon-action-button-minimal") as HTMLButtonElement,
+    );
+    await user.type(
+      container.querySelector(".chat-empty-settings-panel textarea") as HTMLTextAreaElement,
+      supplement,
+    );
+    await user.type(
+      container.querySelector("#entry-input") as HTMLInputElement,
+      "8123456789",
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
+
+    await waitFor(() => {
+      const main = within(screen.getByRole("main"));
+
+      expect(main.getByText(/比赛 ID：8123456789/u)).toBeInTheDocument();
+      expect(main.getByText(new RegExp(`补充说明：${supplement}`, "u"))).toBeInTheDocument();
+      expect(main.getAllByText(/录像正在后台处理/u).length).toBeGreaterThan(0);
+    });
+
+    resolveFetch?.(
+      createConversationResponse("8123456789", "backend replay is ready"),
+    );
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("main")).getByText("backend replay is ready"),
+      ).toBeInTheDocument();
+    });
   });
 
   it("keeps history and clears the active conversation when starting a new chat", async () => {

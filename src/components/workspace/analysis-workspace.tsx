@@ -105,6 +105,38 @@ function buildHistoryLabel(title: string) {
   return title.trim() || "未命名对话";
 }
 
+function formatPlayerSideLabel(value: AnalysisRequest["playerSide"]) {
+  return PLAYER_SIDE_OPTIONS.find((option) => option.value === value)?.label ?? "";
+}
+
+function formatPlayerPositionLabel(value: AnalysisRequest["playerPosition"]) {
+  return PLAYER_POSITION_OPTIONS.find((option) => option.value === value)?.label ?? "";
+}
+
+function buildInitialUserContent(request: AnalysisRequest) {
+  const matchId = request.matchId.trim();
+  const playerSide = request.playerSide ? formatPlayerSideLabel(request.playerSide) : "";
+  const playerPosition = request.playerPosition
+    ? formatPlayerPositionLabel(request.playerPosition)
+    : "";
+  const selectedContext = [playerSide, playerPosition].filter(Boolean).join("，");
+  const question = request.focusQuestion.trim();
+
+  return [
+    matchId ? `比赛 ID：${matchId}` : "",
+    selectedContext ? `视角：${selectedContext}` : "",
+    question ? `${matchId ? "补充说明" : "问题"}：${question}` : "",
+    request.contextSummary.trim()
+      ? `补充上下文：${request.contextSummary.trim()}`
+      : "",
+    request.draftSummary.trim() ? `阵容/选人：${request.draftSummary.trim()}` : "",
+    request.laneOutcome.trim() ? `对线结果：${request.laneOutcome.trim()}` : "",
+    request.replayNotes.trim() ? `录像备注：${request.replayNotes.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function buildReplayProcessingConversation(
   request: AnalysisRequest,
 ): AnalysisConversation {
@@ -120,7 +152,7 @@ function buildReplayProcessingConversation(
       {
         id: "user-entry",
         role: "user",
-        content: matchId,
+        content: buildInitialUserContent(request) || matchId,
       },
       {
         id: "assistant-entry",
@@ -207,12 +239,6 @@ export function AnalysisWorkspace() {
       showAdvanced,
     });
   }, [draft, entryText, showAdvanced, hasRestoredDraft]);
-
-  useEffect(() => {
-    if (currentResult?.request.matchId) {
-      setReplayLoaderValue(currentResult.request.matchId);
-    }
-  }, [currentResult?.request.matchId]);
 
   function handleNewChat() {
     clearCurrentAnalysisResult();
@@ -380,9 +406,11 @@ export function AnalysisWorkspace() {
   async function handleReplayLoad() {
     const replayId = replayLoaderValue.trim();
 
-    if (!replayId) {
+    if (!replayId || isSubmitting) {
       return;
     }
+
+    setReplayLoaderValue("");
 
     await submitPreparedRequest(
       prepareSubmission(replayId, {
@@ -691,9 +719,9 @@ export function AnalysisWorkspace() {
 
             <aside
               className="chat-empty-examples"
-              aria-label="示例问题"
+              aria-label="常见复盘问题"
             >
-              <span className="chat-empty-examples-label">试试这样问</span>
+              <span className="chat-empty-examples-label">常见复盘问题</span>
               <div className="chat-empty-examples-row">
                 {EXAMPLE_PROMPTS.map((example) => (
                   <button
