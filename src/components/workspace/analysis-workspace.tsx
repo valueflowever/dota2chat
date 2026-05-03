@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronUp, PanelLeftClose, PanelLeftOpen, Search, Settings2, X } from "lucide-react";
+import { ChevronUp, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings2, Sparkles, X } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { ResultView } from "@/components/workspace/result-view";
@@ -20,6 +21,7 @@ import { detectAnalysisInput } from "@/lib/analysis/input-mode";
 import type {
   AnalysisConversation,
   AnalysisRequest,
+  DeepThinkingInsight,
   MatchSummary,
   ReplayPreparation,
 } from "@/lib/analysis/schema";
@@ -29,6 +31,7 @@ type AnalyzeApiResponse = {
   warning?: string;
   replayJob?: ReplayPreparation | null;
   matchSummary?: MatchSummary | null;
+  deepThinking?: DeepThinkingInsight | null;
   error?: string;
   fieldErrors?: Record<string, string[] | undefined>;
 };
@@ -43,6 +46,16 @@ const DEFAULT_REPLAY_QUESTION =
 const REPLAY_PROCESSING_ESTIMATE =
   "预计 1-3 分钟；如果需要下载录像或解析服务刚启动，可能会更久。";
 const EMPTY_HISTORY: ReturnType<typeof getAnalysisHistorySnapshot> = [];
+const MOBILE_DRAWER_QUERY = "(max-width: 820px)";
+
+const baseModeByAudience: Record<
+  AnalysisRequest["audience"],
+  AnalysisRequest["mode"]
+> = {
+  "solo-player": "ranked-coaching",
+  coach: "team-review",
+  creator: "content-breakdown",
+};
 
 const PLAYER_SIDE_OPTIONS: Array<{
   value: AnalysisRequest["playerSide"];
@@ -98,6 +111,34 @@ function prepareSubmission(entryText: string, draft: AnalysisRequest): AnalysisR
     matchId: "",
     focusQuestion: parsedEntry.normalizedValue,
     contextSummary: [draft.contextSummary.trim(), supplement].filter(Boolean).join("\n\n"),
+  };
+}
+
+function applyThinkingMode(
+  request: AnalysisRequest,
+  enabled: boolean,
+): AnalysisRequest {
+  return {
+    ...request,
+    deepThinking: enabled,
+    mode: enabled
+      ? "deep-thinking"
+      : request.mode === "deep-thinking"
+      ? baseModeByAudience[request.audience]
+      : request.mode,
+  };
+}
+
+function markAssistantDeepThinking(
+  conversation: AnalysisConversation,
+): AnalysisConversation {
+  return {
+    ...conversation,
+    messages: conversation.messages.map((message) =>
+      message.role === "assistant"
+        ? { ...message, deepThinking: true }
+        : message,
+    ),
   };
 }
 
@@ -181,6 +222,36 @@ function buildReplayProcessingConversation(
   };
 }
 
+function buildPendingQuestionConversation(
+  request: AnalysisRequest,
+): AnalysisConversation {
+  const userContent = buildInitialUserContent(request) || request.focusQuestion.trim();
+  const titleSeed = request.focusQuestion.trim();
+  const title = titleSeed.length > 32 ? `${titleSeed.slice(0, 32)}…` : titleSeed || "新对话";
+
+  return {
+    mode: "game-question",
+    title,
+    summary: "正在生成回答",
+    source: "demo-engine",
+    generatedAt: new Date().toISOString(),
+    messages: [
+      {
+        id: "user-entry",
+        role: "user",
+        content: userContent || "(空问题)",
+      },
+      {
+        id: "assistant-pending",
+        role: "assistant",
+        content: "…",
+        pending: true,
+      },
+    ],
+    followUps: [],
+  };
+}
+
 export function AnalysisWorkspace() {
   const currentResult = useSyncExternalStore(
     subscribeAnalysisResult,
@@ -197,7 +268,10 @@ export function AnalysisWorkspace() {
   const [entryText, setEntryText] = useState("");
   const [replayLoaderValue, setReplayLoaderValue] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [thinkingMode, setThinkingMode] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<
     Record<string, string[] | undefined>
   >({});
@@ -209,6 +283,59 @@ export function AnalysisWorkspace() {
   useEffect(() => {
     setHasHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia(MOBILE_DRAWER_QUERY);
+    const syncMobileLayout = () => setIsMobileLayout(mediaQuery.matches);
+
+    syncMobileLayout();
+    mediaQuery.addEventListener("change", syncMobileLayout);
+
+    return () => {
+      mediaQuery.removeEventListener("change", syncMobileLayout);
+    };
+  }, []);
+
+  // Lock body scroll while the mobile drawer is open so the
+  // background page doesn't jiggle behind the overlay.
+  useEffect(() => {
+    if (!isMobileLayout || !isMobileDrawerOpen) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileDrawerOpen, isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout && isMobileDrawerOpen) {
+      setIsMobileDrawerOpen(false);
+    }
+  }, [isMobileDrawerOpen, isMobileLayout]);
+
+  // ESC closes the mobile drawer.
+  useEffect(() => {
+    if (!isMobileDrawerOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMobileDrawerOpen(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileDrawerOpen]);
 
   useEffect(() => {
     const storedDraftState = loadDraftState();
@@ -223,6 +350,7 @@ export function AnalysisWorkspace() {
       setEntryText(restoredEntry);
       setReplayLoaderValue(restoredDraft.matchId || "");
       setShowAdvanced(storedDraftState.showAdvanced);
+      setThinkingMode(Boolean(restoredDraft.deepThinking));
     }
 
     setHasRestoredDraft(true);
@@ -234,11 +362,11 @@ export function AnalysisWorkspace() {
     }
 
     saveDraftState({
-      draft,
+      draft: applyThinkingMode(draft, thinkingMode),
       entryText,
       showAdvanced,
     });
-  }, [draft, entryText, showAdvanced, hasRestoredDraft]);
+  }, [draft, entryText, showAdvanced, thinkingMode, hasRestoredDraft]);
 
   function handleNewChat() {
     clearCurrentAnalysisResult();
@@ -248,6 +376,13 @@ export function AnalysisWorkspace() {
     setFieldErrors({});
     setEntryText("");
     setReplayLoaderValue("");
+    setThinkingMode(false);
+    setIsMobileDrawerOpen(false);
+  }
+
+  function handleSelectHistoryItem(id: string) {
+    selectAnalysisHistoryItem(id);
+    setIsMobileDrawerOpen(false);
   }
 
   function updateFocusQuestion(value: string) {
@@ -276,17 +411,23 @@ export function AnalysisWorkspace() {
       return;
     }
 
-    const optimisticResult = preparedRequest.matchId.trim()
-      ? saveAnalysisResult({
-          request: preparedRequest,
-          result: {
-            conversation: buildReplayProcessingConversation(preparedRequest),
-            warning: `录像正在后台处理，${REPLAY_PROCESSING_ESTIMATE}`,
-            replayJob: null,
-            matchSummary: null,
-          },
-        })
-      : null;
+    const requestForSubmit = applyThinkingMode(preparedRequest, thinkingMode);
+    const isReplay = Boolean(requestForSubmit.matchId.trim());
+    const optimisticConversation = isReplay
+      ? buildReplayProcessingConversation(requestForSubmit)
+      : buildPendingQuestionConversation(requestForSubmit);
+    const optimisticResult = saveAnalysisResult({
+      request: requestForSubmit,
+      result: {
+        conversation: optimisticConversation,
+        warning: isReplay
+          ? `录像正在后台处理，${REPLAY_PROCESSING_ESTIMATE}`
+          : undefined,
+        replayJob: null,
+        matchSummary: null,
+        deepThinking: null,
+      },
+    });
 
     setIsSubmitting(true);
 
@@ -296,7 +437,7 @@ export function AnalysisWorkspace() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(preparedRequest),
+        body: JSON.stringify(requestForSubmit),
       });
 
       let payload: AnalyzeApiResponse | null = null;
@@ -310,85 +451,110 @@ export function AnalysisWorkspace() {
       if (!response.ok) {
         setFieldErrors(payload?.fieldErrors ?? {});
         setRequestError(payload?.error ?? "分析请求失败，请检查输入后重试。");
-        if (optimisticResult) {
-          saveAnalysisResult({
-            id: optimisticResult.id,
-            request: preparedRequest,
-            result: {
-              conversation: {
-                ...optimisticResult.result.conversation,
-                summary: "请求失败",
-                messages: [
-                  optimisticResult.result.conversation.messages[0],
-                  {
-                    id: "assistant-entry",
-                    role: "assistant",
-                    content:
-                      payload?.error ??
-                      "录像处理请求失败了。请稍后重试，或检查后端服务是否可用。",
-                  },
-                ],
-              },
-              warning: payload?.error ?? "录像处理请求失败。",
-              replayJob: null,
-              matchSummary: null,
+        const fallbackMessage = isReplay
+          ? "录像处理请求失败了。请稍后重试，或检查后端服务是否可用。"
+          : "回答生成失败了。请稍后重试，或检查后端服务是否可用。";
+        const fallbackWarning = isReplay
+          ? "录像处理请求失败。"
+          : "回答生成失败。";
+        saveAnalysisResult({
+          id: optimisticResult.id,
+          request: requestForSubmit,
+          result: {
+            conversation: {
+              ...optimisticResult.result.conversation,
+              summary: "请求失败",
+              messages: [
+                optimisticResult.result.conversation.messages[0],
+                {
+                  id: "assistant-entry",
+                  role: "assistant",
+                  content: payload?.error ?? fallbackMessage,
+                },
+              ],
             },
-          });
-        }
+            warning: payload?.error ?? fallbackWarning,
+            replayJob: null,
+            matchSummary: null,
+            deepThinking: null,
+          },
+        });
         return;
       }
 
       if (!payload) {
         setFieldErrors({});
         setRequestError("对话结果解析失败，请稍后再试。");
-        if (optimisticResult) {
-          saveAnalysisResult({
-            id: optimisticResult.id,
-            request: preparedRequest,
-            result: {
-              conversation: {
-                ...optimisticResult.result.conversation,
-                summary: "请求失败",
-              },
-              warning: "对话结果解析失败，请稍后再试。",
-              replayJob: null,
-              matchSummary: null,
+        saveAnalysisResult({
+          id: optimisticResult.id,
+          request: requestForSubmit,
+          result: {
+            conversation: {
+              ...optimisticResult.result.conversation,
+              summary: "请求失败",
+              messages: [
+                optimisticResult.result.conversation.messages[0],
+                {
+                  id: "assistant-entry",
+                  role: "assistant",
+                  content: "对话结果解析失败，请稍后再试。",
+                },
+              ],
             },
-          });
-        }
+            warning: "对话结果解析失败，请稍后再试。",
+            replayJob: null,
+            matchSummary: null,
+          },
+        });
         return;
       }
 
       setFieldErrors({});
       setRequestError("");
       saveAnalysisResult({
-        id: optimisticResult?.id,
-        request: preparedRequest,
+        id: optimisticResult.id,
+        request: requestForSubmit,
         result: {
-          conversation: payload.conversation,
+          conversation: requestForSubmit.deepThinking
+            ? markAssistantDeepThinking(payload.conversation)
+            : payload.conversation,
           warning: payload.warning,
           replayJob: payload.replayJob,
           matchSummary: payload.matchSummary,
+          deepThinking: payload.deepThinking ?? null,
         },
       });
     } catch {
       setFieldErrors({});
       setRequestError("暂时无法生成对话结果，请稍后再试。");
-      if (optimisticResult) {
-        saveAnalysisResult({
-          id: optimisticResult.id,
-          request: preparedRequest,
-          result: {
-            conversation: {
-              ...optimisticResult.result.conversation,
-              summary: "请求失败",
-            },
-            warning: "暂时无法连接后端，但这条对话已保留。请稍后重新加载这个比赛编号。",
-            replayJob: null,
-            matchSummary: null,
+      const fallbackWarning = isReplay
+        ? "暂时无法连接后端，但这条对话已保留。请稍后重新加载这个比赛编号。"
+        : "暂时无法连接后端，请稍后重试这个问题。";
+      const fallbackContent = isReplay
+        ? "暂时无法连接后端，请稍后重试。"
+        : "暂时无法连接后端，请稍后重试这个问题。";
+      saveAnalysisResult({
+        id: optimisticResult.id,
+        request: requestForSubmit,
+        result: {
+          conversation: {
+            ...optimisticResult.result.conversation,
+            summary: "请求失败",
+            messages: [
+              optimisticResult.result.conversation.messages[0],
+              {
+                id: "assistant-entry",
+                role: "assistant",
+                content: fallbackContent,
+              },
+            ],
           },
-        });
-      }
+          warning: fallbackWarning,
+          replayJob: null,
+          matchSummary: null,
+          deepThinking: null,
+        },
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -421,30 +587,82 @@ export function AnalysisWorkspace() {
   }
 
   const sidebarToggleLabel = isSidebarCollapsed ? "展开侧栏" : "收起侧栏";
+  const mobileDrawerActive = isMobileDrawerOpen;
+  const renderFullSidebar = !isSidebarCollapsed || mobileDrawerActive;
+  const sidebarIsInert = isMobileLayout && !isMobileDrawerOpen;
 
   return (
     <div
       className={`chat-app-shell chat-theme-notion chat-theme-cool ${
         isSidebarCollapsed ? "chat-app-shell-collapsed" : ""
-      }`}
+      } ${isMobileDrawerOpen ? "chat-app-shell-drawer-open" : ""}`}
     >
-      <aside className="chat-history-sidebar" aria-label="历史对话">
+      <button
+        type="button"
+        className="chat-mobile-menu-trigger"
+        aria-label="打开历史对话"
+        aria-expanded={isMobileDrawerOpen}
+        aria-controls="chat-history-sidebar"
+        onClick={() => setIsMobileDrawerOpen(true)}
+      >
+        <Menu size={20} aria-hidden="true" />
+      </button>
+
+      {isMobileDrawerOpen ? (
+        <button
+          type="button"
+          className="chat-mobile-backdrop"
+          aria-label="关闭历史对话"
+          onClick={() => setIsMobileDrawerOpen(false)}
+        />
+      ) : null}
+
+      <aside
+        id="chat-history-sidebar"
+        className="chat-history-sidebar"
+        aria-label="历史对话"
+        aria-hidden={sidebarIsInert ? true : undefined}
+        inert={sidebarIsInert ? true : undefined}
+      >
         <div className="chat-history-top">
           <div className="chat-history-header">
             <div className="chat-history-brand">
-              <span className="chat-history-eyebrow">Replay Copilot</span>
-              <h2 className="chat-history-heading">Ancient Lens</h2>
+              <span
+                className="chat-history-logo"
+                aria-label="Dota 2"
+                title="Dota 2 Replay Copilot"
+              >
+                <Image
+                  src="/dota2-logo.png"
+                  alt="Dota 2"
+                  width={42}
+                  height={42}
+                  priority
+                />
+              </span>
+              <div className="chat-history-brand-copy">
+                <span className="chat-history-eyebrow">DOTA 2 · REPLAY COPILOT</span>
+                <h2 className="chat-history-heading">Ancient Lens</h2>
+              </div>
             </div>
 
             <button
               type="button"
               className="chat-history-toggle"
-              aria-label={sidebarToggleLabel}
+              aria-label={mobileDrawerActive ? "关闭历史对话" : sidebarToggleLabel}
               aria-pressed={isSidebarCollapsed}
-              title={sidebarToggleLabel}
-              onClick={() => setIsSidebarCollapsed((current) => !current)}
+              title={mobileDrawerActive ? "关闭历史对话" : sidebarToggleLabel}
+              onClick={() => {
+                if (mobileDrawerActive) {
+                  setIsMobileDrawerOpen(false);
+                  return;
+                }
+                setIsSidebarCollapsed((current) => !current);
+              }}
             >
-              {isSidebarCollapsed ? (
+              {mobileDrawerActive ? (
+                <X size={18} aria-hidden="true" />
+              ) : isSidebarCollapsed ? (
                 <PanelLeftOpen size={18} aria-hidden="true" />
               ) : (
                 <PanelLeftClose size={18} aria-hidden="true" />
@@ -452,7 +670,7 @@ export function AnalysisWorkspace() {
             </button>
           </div>
 
-          {!isSidebarCollapsed ? (
+          {renderFullSidebar ? (
             <div className="chat-history-action-stack">
               <div className="chat-history-action-panel">
                 <button
@@ -496,7 +714,7 @@ export function AnalysisWorkspace() {
           ) : null}
         </div>
 
-        {!isSidebarCollapsed ? (
+        {renderFullSidebar ? (
           <div className="chat-history-list-panel">
             <div className="chat-history-list-header">
               <span className="chat-history-section-label">最近对话</span>
@@ -519,7 +737,7 @@ export function AnalysisWorkspace() {
                       className={`chat-history-item ${
                         active ? "chat-history-item-active" : ""
                       }`}
-                      onClick={() => selectAnalysisHistoryItem(entry.id)}
+                      onClick={() => handleSelectHistoryItem(entry.id)}
                     >
                       <button
                         type="button"
@@ -527,7 +745,7 @@ export function AnalysisWorkspace() {
                         aria-label={buildHistoryLabel(entry.result.conversation.title)}
                         aria-current={active ? "true" : undefined}
                         title={buildHistoryLabel(entry.result.conversation.title)}
-                        onClick={() => selectAnalysisHistoryItem(entry.id)}
+                        onClick={() => handleSelectHistoryItem(entry.id)}
                       >
                         <span className="chat-history-item-title">
                           {buildHistoryLabel(entry.result.conversation.title)}
@@ -574,6 +792,7 @@ export function AnalysisWorkspace() {
             warning={currentResult.result.warning}
             replayJob={currentResult.result.replayJob}
             matchSummary={currentResult.result.matchSummary}
+            deepThinking={currentResult.result.deepThinking}
             onConversationChange={(nextConversation, nextWarning, nextMeta) => {
               saveAnalysisResult({
                 id: currentResult.id,
@@ -589,6 +808,10 @@ export function AnalysisWorkspace() {
                     nextMeta?.matchSummary === undefined
                       ? currentResult.result.matchSummary
                       : nextMeta.matchSummary,
+                  deepThinking:
+                    nextMeta?.deepThinking === undefined
+                      ? currentResult.result.deepThinking
+                      : nextMeta.deepThinking,
                 },
               });
             }}
@@ -629,6 +852,32 @@ export function AnalysisWorkspace() {
                   </div>
 
                   <div className="search-input-actions">
+                    <button
+                      type="button"
+                      className={`analysis-chat-thinking-toggle analysis-chat-thinking-toggle-compact ${
+                        thinkingMode ? "analysis-chat-thinking-toggle-active" : ""
+                      }`}
+                      aria-pressed={thinkingMode}
+                      disabled={isSubmitting}
+                      title={
+                        isSubmitting
+                          ? "请求进行中，本次模式已锁定"
+                          : thinkingMode
+                          ? "已开启深度思考：耗时更久，分析更细"
+                          : "开启深度思考：让模型用更长时间做更专业的分析"
+                      }
+                      onClick={() => setThinkingMode((current) => !current)}
+                    >
+                      <Sparkles size={14} aria-hidden="true" />
+                      <span>深度思考</span>
+                      <span
+                        className="analysis-chat-thinking-toggle-state"
+                        aria-hidden="true"
+                      >
+                        {thinkingMode ? "ON" : "OFF"}
+                      </span>
+                    </button>
+
                     <button
                       type="button"
                       aria-label={ADVANCED_OPTIONS_LABEL}

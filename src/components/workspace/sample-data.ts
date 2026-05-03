@@ -53,6 +53,10 @@ export const modeCards: Record<
     label: "内容拆解",
     description: "更强调叙事、爆点和观众能看懂的因果链。",
   },
+  "deep-thinking": {
+    label: "深度思考",
+    description: "结合职业比赛模型，优先检查胜率下滑和拖时长窗口。",
+  },
 };
 
 export const recommendedModeByAudience: Record<AnalysisAudience, AnalysisMode> = {
@@ -70,6 +74,7 @@ export const sampleRequests: Record<AnalysisAudience, AnalysisRequest> = {
 export const defaultDraft: AnalysisRequest = {
   audience: "solo-player",
   mode: "ranked-coaching",
+  deepThinking: false,
   matchId: "",
   focusQuestion: "",
   contextSummary: "",

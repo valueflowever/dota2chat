@@ -5,6 +5,8 @@ import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnalysisWorkspace } from "@/components/workspace/analysis-workspace";
+import { defaultDraft } from "@/components/workspace/sample-data";
+import { ANALYSIS_DRAFT_KEY } from "@/lib/analysis/client-session";
 import { renderWithProviders } from "@/test/test-utils";
 
 function createConversationResponse(matchId: string, verdict: string) {
@@ -255,6 +257,50 @@ describe("AnalysisWorkspace", () => {
     expect(requestBody.playerSide).toBe("dire");
     expect(requestBody.playerPosition).toBe("3");
     expect(requestBody.focusQuestion).toBe("团战该怎么站位？");
+  });
+
+  it("falls back to the audience mode when restored deep thinking is disabled", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      createConversationResponse("question", "quick question backend answer"),
+    );
+
+    sessionStorage.setItem(
+      ANALYSIS_DRAFT_KEY,
+      JSON.stringify({
+        draft: {
+          ...defaultDraft,
+          mode: "deep-thinking",
+          deepThinking: true,
+        },
+        entryText: "团战该怎么站位？",
+        showAdvanced: false,
+      }),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+
+    await waitFor(() => {
+      expect(container.querySelector("#entry-input")).not.toBeNull();
+    });
+
+    await user.click(
+      container.querySelector(".analysis-chat-thinking-toggle") as HTMLButtonElement,
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(requestBody.deepThinking).toBe(false);
+    expect(requestBody.mode).toBe("ranked-coaching");
   });
 
   it("submits an empty-state quick question directly to the backend", async () => {

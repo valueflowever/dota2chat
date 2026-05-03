@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { IBM_Plex_Mono, Manrope } from "next/font/google";
 
 import "./globals.css";
-import "./chat-refresh.css";
 
 const manrope = Manrope({
   variable: "--font-space-grotesk",

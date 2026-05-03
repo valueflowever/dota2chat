@@ -24,6 +24,8 @@ const modeInstructions = {
     "Structure the response like a serious team review. Emphasize chain reactions between lanes, vision, objective setup, and fight entry timing.",
   "content-breakdown":
     "Structure the response like an analyst preparing an episode. Pull out storyline hooks, tension swings, and audience-friendly beats.",
+  "deep-thinking":
+    "Use the deepest available evidence. Prioritize model-backed win probability drops, duration extension windows, and careful causal hypotheses.",
 } as const;
 
 const toneInstructions = {

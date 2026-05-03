@@ -6,6 +6,7 @@ export const modeValues = [
   "ranked-coaching",
   "team-review",
   "content-breakdown",
+  "deep-thinking",
 ] as const;
 export const toneValues = ["balanced", "direct", "blunt", "broadcast"] as const;
 export const conversationModeValues = ["match-replay", "game-question"] as const;
@@ -38,6 +39,7 @@ export const timelineEventSchema = z.object({
 export const analysisRequestSchema = z.object({
   audience: z.enum(audienceValues),
   mode: z.enum(modeValues).default("quick-scan"),
+  deepThinking: z.boolean().optional(),
   matchId: z.string().trim().max(32).default(""),
   focusQuestion: z.string().trim().min(4, "请写下你最关心的问题"),
   contextSummary: z.string().trim().max(2000).default(""),
@@ -115,6 +117,8 @@ const conversationMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["user", "assistant"]),
   content: z.string().trim().min(1),
+  deepThinking: z.boolean().optional(),
+  pending: z.boolean().optional(),
 });
 
 const conversationFollowUpSchema = z.object({
@@ -127,7 +131,7 @@ export const analysisConversationSchema = z.object({
   title: z.string().trim().min(1),
   summary: z.string().trim().min(1),
   messages: z.array(conversationMessageSchema).min(2),
-  followUps: z.array(conversationFollowUpSchema).min(2).max(6),
+  followUps: z.array(conversationFollowUpSchema).max(6),
   source: z.enum(["live-ai", "demo-engine"]),
   generatedAt: z.string(),
 });
@@ -156,6 +160,38 @@ export const matchSummarySchema = z.object({
   players: z.array(z.record(z.string(), z.unknown())).default([]),
 });
 
+export const deepThinkingRiskWindowSchema = z
+  .object({
+    startTime: z.number().optional(),
+    endTime: z.number().optional(),
+    startTimeText: z.string().optional(),
+    endTimeText: z.string().optional(),
+    winnerProbabilityDelta: z.number().optional(),
+    winnerProbabilityDrop: z.number().optional(),
+    predictedDurationDeltaSeconds: z.number().optional(),
+    riskScore: z.number().optional(),
+    perspective: z.string().optional(),
+    summary: z.string().optional(),
+  })
+  .passthrough();
+
+export const deepThinkingInsightSchema = z
+  .object({
+    status: z.string(),
+    available: z.boolean().optional(),
+    matchId: z.string().optional(),
+    modelName: z.string().optional(),
+    summary: z.string().optional(),
+    latestTimeText: z.string().optional(),
+    latestRadiantWinProb: z.number().optional(),
+    latestDireWinProb: z.number().optional(),
+    predictedWinnerName: z.string().optional(),
+    predictedRemainingSeconds: z.number().optional(),
+    riskWindows: z.array(deepThinkingRiskWindowSchema).default([]),
+    modelMetrics: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
 export type TimelineEvent = z.infer<typeof timelineEventSchema>;
 export type AnalysisRequest = z.infer<typeof analysisRequestSchema>;
 export type AnalysisReportPayload = z.infer<typeof analysisReportPayloadSchema>;
@@ -163,3 +199,4 @@ export type AnalysisReport = z.infer<typeof analysisReportSchema>;
 export type AnalysisConversation = z.infer<typeof analysisConversationSchema>;
 export type ReplayPreparation = z.infer<typeof replayPreparationSchema>;
 export type MatchSummary = z.infer<typeof matchSummarySchema>;
+export type DeepThinkingInsight = z.infer<typeof deepThinkingInsightSchema>;

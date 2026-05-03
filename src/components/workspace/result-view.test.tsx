@@ -359,6 +359,42 @@ describe("ResultView", () => {
     expect(requestBody.contextSummary).toContain("这局高地前到底哪里脱节了？");
   });
 
+  it("does not keep deep-thinking mode on follow-up after the toggle is disabled", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      createFollowUpResponse("backend answer without deep thinking"),
+    );
+    const { container } = render(
+      <ResultView
+        request={{
+          ...baseRequest,
+          mode: "deep-thinking",
+          deepThinking: true,
+        }}
+        conversation={matchConversation}
+      />,
+    );
+
+    await user.click(
+      container.querySelector(".analysis-chat-thinking-toggle") as HTMLButtonElement,
+    );
+    await user.type(screen.getByLabelText("继续追问"), "这波还要不要接？");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(requestBody.deepThinking).toBe(false);
+    expect(requestBody.mode).toBe("ranked-coaching");
+  });
+
   it("shows an actionable message when replay parsing fails because the parser is offline", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(
       new Response(
@@ -396,7 +432,7 @@ describe("ResultView", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("录像解析：解析失败")).toBeInTheDocument();
+      expect(screen.getByText("解析失败")).toBeInTheDocument();
     });
 
     expect(screen.getByText(/录像解析器服务未启动/u)).toBeInTheDocument();

@@ -1,20 +1,31 @@
 "use client";
 
-import { ChevronRight, Copy, SendHorizontal } from "lucide-react";
+import { AlertCircle, Check, ChevronRight, Copy, Pencil, SendHorizontal, Sparkles, Square, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AnalysisConversation,
   AnalysisRequest,
+  DeepThinkingInsight,
   MatchSummary,
   ReplayPreparation,
 } from "@/lib/analysis/schema";
 
 const INPUT_MAX_HEIGHT_PX = 180;
+const EDIT_MAX_HEIGHT_PX = 320;
 const FOLLOW_UP_CONTEXT_MAX_LENGTH = 1900;
 const EXISTING_CONTEXT_MAX_LENGTH = 360;
 const MESSAGE_CONTEXT_MAX_LENGTH = 220;
+
+const baseModeByAudience: Record<
+  AnalysisRequest["audience"],
+  AnalysisRequest["mode"]
+> = {
+  "solo-player": "ranked-coaching",
+  coach: "team-review",
+  creator: "content-breakdown",
+};
 
 function renderInlineSegments(text: string, keyPrefix: string): ReactNode {
   if (!text) {
@@ -143,6 +154,7 @@ type ResultViewProps = {
   warning?: string;
   replayJob?: ReplayPreparation | null;
   matchSummary?: MatchSummary | null;
+  deepThinking?: DeepThinkingInsight | null;
   onConversationChange?: (
     conversation: AnalysisConversation,
     warning?: string,
@@ -153,6 +165,7 @@ type ResultViewProps = {
 type ResultMetaUpdate = {
   replayJob?: ReplayPreparation | null;
   matchSummary?: MatchSummary | null;
+  deepThinking?: DeepThinkingInsight | null;
 };
 
 type ReplayJobStatusPayload = {
@@ -221,26 +234,6 @@ function formatWinner(summary: MatchSummary) {
   return "胜负待同步";
 }
 
-function formatReplayJobStatus(status: string) {
-  if (status === "queued") {
-    return "排队中";
-  }
-
-  if (status === "running") {
-    return "解析中";
-  }
-
-  if (status === "completed") {
-    return "解析完成";
-  }
-
-  if (status === "failed") {
-    return "解析失败";
-  }
-
-  return status;
-}
-
 function formatPlayerSideContext(side: AnalysisRequest["playerSide"]) {
   if (side === "radiant") {
     return "天辉";
@@ -255,6 +248,19 @@ function formatPlayerSideContext(side: AnalysisRequest["playerSide"]) {
 
 function formatPlayerPositionContext(position: AnalysisRequest["playerPosition"]) {
   return position ? `${position}号位` : "";
+}
+
+function resolveThinkingRequestMode(
+  request: AnalysisRequest,
+  thinkingEnabled: boolean,
+): AnalysisRequest["mode"] {
+  if (thinkingEnabled) {
+    return "deep-thinking";
+  }
+
+  return request.mode === "deep-thinking"
+    ? baseModeByAudience[request.audience]
+    : request.mode;
 }
 
 function formatReplayJobDetail(job: ReplayPreparation) {
@@ -295,12 +301,207 @@ function formatReplayJobFailure(error?: string | null) {
   return "录像解析失败，请稍后重试或检查后端服务。";
 }
 
+function formatProbability(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "-";
+  }
+
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatMinuteAmount(seconds?: number | null) {
+  if (typeof seconds !== "number" || Number.isNaN(seconds)) {
+    return "-";
+  }
+
+  return `${(Math.abs(seconds) / 60).toFixed(1)} 分钟`;
+}
+
+function formatSignedPointDelta(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "-";
+  }
+
+  return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} pp`;
+}
+
+function DeepThinkingPanel({ insight }: { insight: DeepThinkingInsight }) {
+  const riskWindows = insight.riskWindows?.slice(0, 3) ?? [];
+  const ready = insight.status === "ready";
+
+  return (
+    <section
+      className={`deep-thinking-card ${
+        ready ? "deep-thinking-card-ready" : "deep-thinking-card-muted"
+      }`}
+      aria-label="深度思考模型"
+    >
+      <div className="deep-thinking-card-head">
+        <span className="deep-thinking-card-title">
+          <Sparkles size={14} aria-hidden="true" />
+          深度思考
+        </span>
+        <span className="deep-thinking-card-status">
+          {ready ? "模型已接入" : insight.status}
+        </span>
+      </div>
+
+      {insight.summary ? (
+        <p className="deep-thinking-card-summary">{insight.summary}</p>
+      ) : null}
+
+      {ready ? (
+        <>
+          <div className="deep-thinking-metrics">
+            <span>
+              Radiant <strong>{formatProbability(insight.latestRadiantWinProb)}</strong>
+            </span>
+            <span>
+              Dire <strong>{formatProbability(insight.latestDireWinProb)}</strong>
+            </span>
+            <span>
+              剩余 <strong>{formatMinuteAmount(insight.predictedRemainingSeconds)}</strong>
+            </span>
+          </div>
+
+          {riskWindows.length ? (
+            <div className="deep-thinking-windows">
+              {riskWindows.map((window, index) => (
+                <div
+                  key={`${window.startTimeText ?? index}-${window.endTimeText ?? index}`}
+                  className="deep-thinking-window"
+                >
+                  <span className="deep-thinking-window-time">
+                    {window.startTimeText ?? "-"}-{window.endTimeText ?? "-"}
+                  </span>
+                  <span className="deep-thinking-window-detail">
+                    胜率 {formatSignedPointDelta(window.winnerProbabilityDelta)}
+                    {" / "}
+                    时长 {formatMinuteAmount(window.predictedDurationDeltaSeconds)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function isReplayJobStatusActive(status?: string | null) {
   return status === "queued" || status === "running";
 }
 
 function isReplayJobActive(job?: ReplayPreparation | null) {
   return isReplayJobStatusActive(job?.status);
+}
+
+type ReplayProgressStepStatus = "pending" | "active" | "done" | "failed";
+
+const REPLAY_PROGRESS_STEPS: Array<{ key: string; label: string; caption: string }> = [
+  { key: "queue", label: "排队等待", caption: "服务器接受任务并排入处理队列" },
+  { key: "parse", label: "解析录像事件", caption: "下载录像并提取关键时间点" },
+  { key: "report", label: "生成复盘报告", caption: "整合数据，输出结构化分析" },
+];
+
+function deriveReplayStepStatus(
+  jobStatus: string,
+  stepIndex: number,
+): ReplayProgressStepStatus {
+  if (jobStatus === "queued") {
+    if (stepIndex === 0) return "active";
+    return "pending";
+  }
+
+  if (jobStatus === "running") {
+    if (stepIndex === 0) return "done";
+    if (stepIndex === 1) return "active";
+    return "pending";
+  }
+
+  if (jobStatus === "completed") {
+    if (stepIndex === 2) return "active";
+    return "done";
+  }
+
+  if (jobStatus === "failed") {
+    if (stepIndex === 0) return "done";
+    if (stepIndex === 1) return "failed";
+    return "pending";
+  }
+
+  return stepIndex === 0 ? "active" : "pending";
+}
+
+function ReplayProgressCard({ job }: { job: ReplayPreparation }) {
+  const failed = job.status === "failed";
+  const completed = job.status === "completed";
+  const headline = failed
+    ? "解析失败"
+    : completed
+      ? "解析完成"
+      : "录像处理中";
+  const subline = failed
+    ? "请稍后重试，或检查后端服务状态"
+    : completed
+      ? "正在加载完整复盘"
+      : "预计 1-3 分钟，可保持页面打开";
+
+  return (
+    <section
+      className={`replay-progress-card ${
+        failed ? "replay-progress-card-failed" : ""
+      }`}
+      aria-label="录像处理进度"
+      aria-live="polite"
+    >
+      <header className="replay-progress-head">
+        <span className="replay-progress-headline">
+          {failed ? (
+            <AlertCircle size={14} aria-hidden="true" />
+          ) : (
+            <span className="replay-progress-spinner" aria-hidden="true" />
+          )}
+          <span>{headline}</span>
+        </span>
+        <span className="replay-progress-subline">{subline}</span>
+      </header>
+
+      <ol className="replay-progress-steps">
+        {REPLAY_PROGRESS_STEPS.map((step, index) => {
+          const status = deriveReplayStepStatus(job.status, index);
+          return (
+            <li
+              key={step.key}
+              className={`replay-progress-step replay-progress-step-${status}`}
+              aria-current={status === "active" ? "step" : undefined}
+            >
+              <span className="replay-progress-step-icon" aria-hidden="true">
+                {status === "done" ? (
+                  <Check size={12} />
+                ) : status === "failed" ? (
+                  <AlertCircle size={12} />
+                ) : status === "active" ? (
+                  <span className="replay-progress-pulse" />
+                ) : (
+                  <span className="replay-progress-step-index">{index + 1}</span>
+                )}
+              </span>
+              <span className="replay-progress-step-copy">
+                <span className="replay-progress-step-label">{step.label}</span>
+                <span className="replay-progress-step-caption">{step.caption}</span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
+      <p className="replay-progress-detail">
+        {failed ? formatReplayJobFailure(job.error) : formatReplayJobDetail(job)}
+      </p>
+    </section>
+  );
 }
 
 function createTurnId(prefix: string) {
@@ -514,6 +715,7 @@ export function ResultView({
   warning,
   replayJob,
   matchSummary,
+  deepThinking,
   onConversationChange,
 }: ResultViewProps) {
   const sanitizedIncomingMessages = useMemo(
@@ -524,16 +726,25 @@ export function ResultView({
   const [followUps, setFollowUps] = useState(conversation.followUps);
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [thinkingMode, setThinkingMode] = useState(
+    Boolean(request.deepThinking || request.mode === "deep-thinking"),
+  );
   const [sendError, setSendError] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState("");
   const [currentReplayJob, setCurrentReplayJob] = useState(replayJob ?? null);
   const [currentMatchSummary, setCurrentMatchSummary] = useState(matchSummary ?? null);
+  const [currentDeepThinking, setCurrentDeepThinking] = useState(deepThinking ?? null);
   const [jobPollError, setJobPollError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const latestUpdateRef = useRef({
     conversation,
     warning,
     currentMatchSummary,
+    currentDeepThinking,
     onConversationChange,
   });
   const autoLoadedReplayJobIdsRef = useRef<Set<string>>(new Set());
@@ -546,6 +757,8 @@ export function ResultView({
     setDraft("");
     setSendError("");
     setJobPollError("");
+    setEditingMessageId(null);
+    setEditingDraft("");
   }, [conversation, sanitizedIncomingMessages]);
 
   useEffect(() => {
@@ -557,13 +770,22 @@ export function ResultView({
   }, [matchSummary]);
 
   useEffect(() => {
+    setCurrentDeepThinking(deepThinking ?? null);
+  }, [deepThinking]);
+
+  useEffect(() => {
+    setThinkingMode(Boolean(request.deepThinking || request.mode === "deep-thinking"));
+  }, [request.deepThinking, request.focusQuestion, request.matchId, request.mode]);
+
+  useEffect(() => {
     latestUpdateRef.current = {
       conversation,
       warning,
       currentMatchSummary,
+      currentDeepThinking,
       onConversationChange,
     };
-  }, [conversation, currentMatchSummary, onConversationChange, warning]);
+  }, [conversation, currentDeepThinking, currentMatchSummary, onConversationChange, warning]);
 
   const loadCompletedReplayAnalysis = useCallback(async (
     job: ReplayPreparation,
@@ -591,6 +813,7 @@ export function ResultView({
         warning?: string;
         replayJob?: ReplayPreparation | null;
         matchSummary?: MatchSummary | null;
+        deepThinking?: DeepThinkingInsight | null;
       };
 
       if (!response.ok || !payload.conversation) {
@@ -602,21 +825,24 @@ export function ResultView({
         "replayJob" in payload ? payload.replayJob ?? job : job;
       const nextMatchSummary =
         payload.matchSummary ?? fallbackMatchSummary ?? currentMatchSummary;
+      const nextDeepThinking = payload.deepThinking ?? currentDeepThinking;
 
       setMessages(sanitizedPayloadMessages.messages);
       setFollowUps(payload.conversation.followUps);
       setCurrentReplayJob(nextReplayJob);
       setCurrentMatchSummary(nextMatchSummary);
+      setCurrentDeepThinking(nextDeepThinking);
       setJobPollError("");
       onConversationChange?.(payload.conversation, payload.warning ?? "", {
         replayJob: nextReplayJob,
         matchSummary: nextMatchSummary,
+        deepThinking: nextDeepThinking,
       });
     } catch {
       autoLoadedReplayJobIdsRef.current.delete(loadKey);
       setJobPollError("录像已完成处理，但自动加载复盘失败。请重新提交这个比赛编号。");
     }
-  }, [currentMatchSummary, onConversationChange, request]);
+  }, [currentDeepThinking, currentMatchSummary, onConversationChange, request]);
 
   useEffect(() => {
     if (!sanitizedIncomingMessages.changed) {
@@ -734,7 +960,10 @@ export function ResultView({
   const playerSideLabel = formatPlayerSideContext(request.playerSide);
   const playerPositionLabel = formatPlayerPositionContext(request.playerPosition);
 
-  async function submitQuestion(rawQuestion: string) {
+  async function submitQuestion(
+    rawQuestion: string,
+    options?: { baseMessages?: AnalysisConversation["messages"] },
+  ) {
     const question = rawQuestion.trim();
 
     if (!question || isSending) {
@@ -744,16 +973,20 @@ export function ResultView({
     setSendError("");
     setDraft("");
 
+    const baseMessages = options?.baseMessages ?? messages;
     const userMessageId = createTurnId("follow-up-user");
     const userMessage = {
       id: userMessageId,
       role: "user" as const,
       content: question,
     };
-    const nextMessagesWithUser = [...messages, userMessage];
+    const nextMessagesWithUser = [...baseMessages, userMessage];
 
     setMessages(nextMessagesWithUser);
     setIsSending(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       const response = await fetch("/api/analyze", {
@@ -763,14 +996,17 @@ export function ResultView({
         },
         body: JSON.stringify({
           ...request,
+          mode: resolveThinkingRequestMode(request, thinkingMode),
+          deepThinking: thinkingMode,
           focusQuestion: question,
           contextSummary: buildFollowUpContextSummary({
             request,
-            messages,
+            messages: baseMessages,
             question,
             matchSummary: currentMatchSummary,
           }),
         }),
+        signal: controller.signal,
       });
 
       const payload = (await response.json()) as {
@@ -779,6 +1015,7 @@ export function ResultView({
         warning?: string;
         replayJob?: ReplayPreparation | null;
         matchSummary?: MatchSummary | null;
+        deepThinking?: DeepThinkingInsight | null;
       };
 
       if (!response.ok || !payload.conversation) {
@@ -801,17 +1038,20 @@ export function ResultView({
           id: assistantId,
           role: "assistant" as const,
           content: assistantMessage.content,
+          deepThinking: thinkingMode || undefined,
         },
       ];
 
       const nextReplayJob =
         "replayJob" in payload ? payload.replayJob ?? null : currentReplayJob;
       const nextMatchSummary = payload.matchSummary ?? currentMatchSummary;
+      const nextDeepThinking = payload.deepThinking ?? currentDeepThinking;
 
       setMessages(nextMessages);
       setFollowUps(payload.conversation.followUps);
       setCurrentReplayJob(nextReplayJob);
       setCurrentMatchSummary(nextMatchSummary);
+      setCurrentDeepThinking(nextDeepThinking);
       onConversationChange?.({
         ...conversation,
         messages: nextMessages,
@@ -821,13 +1061,80 @@ export function ResultView({
       }, payload.warning, {
         replayJob: nextReplayJob,
         matchSummary: nextMatchSummary,
+        deepThinking: nextDeepThinking,
       });
-    } catch {
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") {
+        // User stopped the request — keep their message visible so they can edit & retry.
+        onConversationChange?.({
+          ...conversation,
+          messages: nextMessagesWithUser,
+        });
+        return;
+      }
       setSendError("继续追问失败，请稍后再试。");
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
       setIsSending(false);
     }
   }
+
+  function stopRequest() {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }
+
+  function beginEdit(messageId: string, content: string) {
+    if (isSending) {
+      return;
+    }
+    setEditingMessageId(messageId);
+    setEditingDraft(content);
+    setSendError("");
+  }
+
+  function cancelEdit() {
+    setEditingMessageId(null);
+    setEditingDraft("");
+  }
+
+  async function submitEdit(messageId: string) {
+    const trimmed = editingDraft.trim();
+    if (!trimmed || isSending) {
+      return;
+    }
+
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index < 0) {
+      return;
+    }
+
+    const baseMessages = messages.slice(0, index);
+    setEditingMessageId(null);
+    setEditingDraft("");
+    setMessages(baseMessages);
+
+    await submitQuestion(trimmed, { baseMessages });
+  }
+
+  useEffect(() => {
+    if (editingMessageId && editTextareaRef.current) {
+      const node = editTextareaRef.current;
+      node.style.height = "auto";
+      node.style.height = `${Math.min(node.scrollHeight, EDIT_MAX_HEIGHT_PX)}px`;
+      node.focus();
+      node.setSelectionRange(node.value.length, node.value.length);
+    }
+  }, [editingMessageId, editingDraft]);
+
+  useEffect(
+    () => () => {
+      abortControllerRef.current?.abort();
+    },
+    [],
+  );
 
   return (
     <section className="analysis-chat-app analysis-chat-app-theme-notion analysis-chat-app-theme-cool">
@@ -863,6 +1170,10 @@ export function ResultView({
         </header>
 
         {warning ? <div className="warning-banner">{warning}</div> : null}
+
+        {currentDeepThinking ? (
+          <DeepThinkingPanel insight={currentDeepThinking} />
+        ) : null}
 
         {currentMatchSummary ? (
           <section className="match-summary-card" aria-label="比赛摘要">
@@ -903,64 +1214,151 @@ export function ResultView({
           </section>
         ) : null}
 
-        {currentReplayJob ? (
-          <section className="warning-banner" aria-label="录像解析状态">
-            <strong>录像解析：{formatReplayJobStatus(currentReplayJob.status)}</strong>
-            <div>{formatReplayJobDetail(currentReplayJob)}</div>
-            {isReplayJobActive(currentReplayJob) ? (
-              <div>解析完成后会自动同步比赛信息，再次分析即可读取完整录像数据。</div>
-            ) : null}
-          </section>
-        ) : null}
+        {currentReplayJob ? <ReplayProgressCard job={currentReplayJob} /> : null}
 
         {jobPollError ? <div className="danger-banner">{jobPollError}</div> : null}
 
         <div className="analysis-chat-scroll analysis-chat-thread-stage">
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className={`analysis-chat-row analysis-chat-row-${message.role} ${
-                message.role === "user" ? "analysis-chat-row-user-compact" : ""
-              }`}
-            >
-              <div
-                className={`analysis-chat-bubble analysis-chat-bubble-${message.role} analysis-chat-message-block analysis-chat-message-block-${message.role} ${
-                  message.role === "user" ? "analysis-chat-message-block-user-compact" : ""
-                }`}
+          {messages.map((message) => {
+            const isEditing =
+              message.role === "user" && editingMessageId === message.id;
+
+            return (
+              <article
+                key={message.id}
+                className={`analysis-chat-row analysis-chat-row-${message.role} ${
+                  message.role === "user" ? "analysis-chat-row-user-compact" : ""
+                } ${isEditing ? "analysis-chat-row-editing" : ""}`}
               >
-                <div className="analysis-chat-bubble-head">
-                  <span className="analysis-chat-bubble-label">
-                    {message.role === "assistant" ? "Ancient Lens" : "你"}
-                  </span>
-                </div>
-                <div className="analysis-chat-copy">
-                  {message.role === "assistant" ? (
-                    renderAssistantContent(message.content)
+                <div
+                  className={`analysis-chat-bubble analysis-chat-bubble-${message.role} analysis-chat-message-block analysis-chat-message-block-${message.role} ${
+                    message.role === "user"
+                      ? "analysis-chat-message-block-user-compact"
+                      : ""
+                  } ${isEditing ? "analysis-chat-message-block-editing" : ""} ${
+                    message.role === "assistant" && message.deepThinking
+                      ? "analysis-chat-message-block-deep-thinking"
+                      : ""
+                  }`}
+                >
+                  <div className="analysis-chat-bubble-head">
+                    <span className="analysis-chat-bubble-label">
+                      {message.role === "assistant" ? "Ancient Lens" : "你"}
+                    </span>
+                    {message.role === "assistant" && message.deepThinking ? (
+                      <span
+                        className="analysis-chat-deep-thinking-badge"
+                        title="本回复使用了深度思考模式"
+                      >
+                        <Sparkles size={11} aria-hidden="true" />
+                        <span>深度思考</span>
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {isEditing ? (
+                    <div className="analysis-chat-edit-form">
+                      <textarea
+                        ref={editTextareaRef}
+                        aria-label="编辑这条消息"
+                        value={editingDraft}
+                        onChange={(event) => setEditingDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            cancelEdit();
+                            return;
+                          }
+                          if (
+                            event.key === "Enter" &&
+                            !event.shiftKey &&
+                            !event.nativeEvent.isComposing
+                          ) {
+                            event.preventDefault();
+                            void submitEdit(message.id);
+                          }
+                        }}
+                        className="analysis-chat-edit-textarea"
+                        rows={1}
+                      />
+                      <div className="analysis-chat-edit-actions">
+                        <button
+                          type="button"
+                          className="analysis-chat-edit-cancel"
+                          onClick={cancelEdit}
+                        >
+                          <X size={15} aria-hidden="true" />
+                          <span>取消</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="analysis-chat-edit-confirm"
+                          onClick={() => void submitEdit(message.id)}
+                          disabled={!editingDraft.trim() || isSending}
+                        >
+                          <SendHorizontal size={15} aria-hidden="true" />
+                          <span>重新发送</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : message.role === "assistant" && message.pending ? (
+                    <div
+                      className="analysis-chat-typing"
+                      role="status"
+                      aria-label="正在生成回答"
+                    >
+                      <span />
+                      <span />
+                      <span />
+                    </div>
                   ) : (
-                    <p className="analysis-chat-paragraph analysis-chat-paragraph-user">
-                      {message.content}
-                    </p>
+                    <div className="analysis-chat-copy">
+                      {message.role === "assistant" ? (
+                        renderAssistantContent(message.content)
+                      ) : (
+                        <p className="analysis-chat-paragraph analysis-chat-paragraph-user">
+                          {message.content}
+                        </p>
+                      )}
+                    </div>
                   )}
+
+                  {!isEditing && message.role === "assistant" && !message.pending ? (
+                    <div className="analysis-chat-message-actions">
+                      <button
+                        type="button"
+                        className="analysis-chat-action-copy"
+                        aria-label="复制回复"
+                        title="复制回复"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(message.content);
+                        }}
+                      >
+                        <Copy size={14} aria-hidden="true" />
+                        <span>复制</span>
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-                {message.role === "assistant" ? (
-                  <div className="analysis-chat-message-actions">
+
+                {!isEditing && message.role === "user" ? (
+                  <div className="analysis-chat-row-edit-action">
                     <button
                       type="button"
-                      className="analysis-chat-action-copy"
-                      aria-label="复制回复"
-                      title="复制回复"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(message.content);
-                      }}
+                      className="analysis-chat-action-edit"
+                      aria-label="编辑并重新发送"
+                      title="编辑并重新发送这条消息"
+                      onClick={() => beginEdit(message.id, message.content)}
+                      disabled={isSending || editingMessageId !== null}
                     >
-                      <Copy size={14} aria-hidden="true" />
-                      <span>复制</span>
+                      <Pencil size={13} aria-hidden="true" />
+                      <span>编辑</span>
                     </button>
                   </div>
                 ) : null}
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
 
           {isSending ? (
             <article
@@ -970,16 +1368,34 @@ export function ResultView({
               <div className="analysis-chat-bubble analysis-chat-bubble-assistant analysis-chat-message-block analysis-chat-message-block-assistant">
                 <div className="analysis-chat-bubble-head">
                   <span className="analysis-chat-bubble-label">Ancient Lens</span>
+                  {thinkingMode ? (
+                    <span className="analysis-chat-thinking-pill">
+                      <Sparkles size={12} aria-hidden="true" />
+                      深度思考中
+                    </span>
+                  ) : null}
                 </div>
-                <div
-                  className="analysis-chat-typing"
-                  role="status"
-                  aria-label="正在分析"
-                >
-                  <span />
-                  <span />
-                  <span />
-                </div>
+                {thinkingMode ? (
+                  <div
+                    className="analysis-chat-thinking-shimmer"
+                    role="status"
+                    aria-label="正在深度思考"
+                  >
+                    <span className="analysis-chat-thinking-shimmer-text">
+                      正在调取更长上下文，逐步推导关键节点……
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    className="analysis-chat-typing"
+                    role="status"
+                    aria-label="正在分析"
+                  >
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                )}
               </div>
             </article>
           ) : null}
@@ -1024,7 +1440,9 @@ export function ResultView({
 
         <div className="analysis-chat-composer-shell">
           <form
-            className="analysis-chat-composer analysis-chat-composer-bar analysis-chat-composer-bar-subtle analysis-chat-composer-bar-integrated"
+            className={`analysis-chat-composer analysis-chat-composer-bar analysis-chat-composer-bar-subtle analysis-chat-composer-bar-integrated analysis-chat-composer-bar-stacked ${
+              thinkingMode ? "analysis-chat-composer-bar-thinking" : ""
+            }`}
             onSubmit={(event) => {
               event.preventDefault();
               void submitQuestion(draft);
@@ -1053,21 +1471,65 @@ export function ResultView({
               }}
               className="analysis-chat-input analysis-chat-input-tall analysis-chat-input-taller"
               placeholder={
-                conversation.mode === "match-replay"
+                editingMessageId !== null
+                  ? "正在编辑上方的消息……"
+                  : conversation.mode === "match-replay"
                   ? "继续问这场比赛，比如：这局高地前到底哪里脱节了？"
                   : "继续问这个问题，比如：给我更偏排位的版本。"
               }
+              disabled={editingMessageId !== null}
               rows={1}
             />
 
-            <button
-              type="submit"
-              className="analysis-chat-send analysis-chat-send-muted analysis-chat-send-soft"
-              disabled={isSending || !draft.trim()}
-            >
-              <SendHorizontal size={16} aria-hidden="true" />
-              <span>{isSending ? "发送中..." : "发送"}</span>
-            </button>
+            <div className="analysis-chat-composer-actions">
+              <button
+                type="button"
+                className={`analysis-chat-thinking-toggle ${
+                  thinkingMode ? "analysis-chat-thinking-toggle-active" : ""
+                }`}
+                aria-pressed={thinkingMode}
+                disabled={isSending || editingMessageId !== null}
+                title={
+                  isSending
+                    ? "请求进行中，本次模式已锁定"
+                    : thinkingMode
+                    ? "已开启深度思考：耗时更久，分析更细"
+                    : "开启深度思考：让模型用更长时间做更专业的分析"
+                }
+                onClick={() => setThinkingMode((current) => !current)}
+              >
+                <Sparkles size={14} aria-hidden="true" />
+                <span>深度思考</span>
+                <span
+                  className="analysis-chat-thinking-toggle-state"
+                  aria-hidden="true"
+                >
+                  {thinkingMode ? "ON" : "OFF"}
+                </span>
+              </button>
+
+              {isSending ? (
+                <button
+                  type="button"
+                  className="analysis-chat-send analysis-chat-send-stop"
+                  onClick={stopRequest}
+                  aria-label="停止生成"
+                  title="停止生成（保留你的问题，可编辑后重发）"
+                >
+                  <Square size={11} fill="currentColor" aria-hidden="true" />
+                  <span>停止</span>
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="analysis-chat-send analysis-chat-send-muted analysis-chat-send-soft"
+                  disabled={!draft.trim() || editingMessageId !== null}
+                >
+                  <SendHorizontal size={16} aria-hidden="true" />
+                  <span>发送</span>
+                </button>
+              )}
+            </div>
           </form>
         </div>
 

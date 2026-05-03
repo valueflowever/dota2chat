@@ -1,6 +1,7 @@
 import type {
   AnalysisConversation,
   AnalysisRequest,
+  DeepThinkingInsight,
   MatchSummary,
   ReplayPreparation,
 } from "@/lib/analysis/schema";
@@ -24,6 +25,7 @@ export type StoredAnalysisResult = {
     warning?: string;
     replayJob?: ReplayPreparation | null;
     matchSummary?: MatchSummary | null;
+    deepThinking?: DeepThinkingInsight | null;
   };
 };
 
