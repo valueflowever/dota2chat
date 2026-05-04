@@ -73,6 +73,6 @@ describe("buildAnalysisPrompt", () => {
     });
 
     expect(prompt.user).toContain("Player Side: Dire / 夜魇");
-    expect(prompt.user).toContain("Player Position: 4号位");
+    expect(prompt.user).toContain("Player Position: 辅助");
   });
 });

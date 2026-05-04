@@ -4,6 +4,11 @@ import { AlertCircle, Check, ChevronRight, Copy, Pencil, SendHorizontal, Sparkle
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  buildStreamingFollowUps,
+  readAnalyzeResponseEvents,
+  type AnalyzeStreamPayload,
+} from "@/lib/analysis/chat-stream";
 import type {
   AnalysisConversation,
   AnalysisRequest,
@@ -11,6 +16,7 @@ import type {
   MatchSummary,
   ReplayPreparation,
 } from "@/lib/analysis/schema";
+import { formatPlayerPositionRole } from "@/lib/analysis/player-context";
 
 const INPUT_MAX_HEIGHT_PX = 180;
 const EDIT_MAX_HEIGHT_PX = 320;
@@ -149,6 +155,7 @@ function renderAssistantContent(content: string): ReactNode {
 }
 
 type ResultViewProps = {
+  conversationId?: string;
   request: AnalysisRequest;
   conversation: AnalysisConversation;
   warning?: string;
@@ -184,10 +191,27 @@ function buildConversationTitle(
   }
 
   if (request.matchId.trim()) {
-    return `比赛 ${request.matchId.trim()}`;
+    return `比赛编号 ${request.matchId.trim()}`;
   }
 
   return "本局复盘";
+}
+
+function buildConversationIdentity(
+  request: AnalysisRequest,
+  conversation: AnalysisConversation,
+) {
+  const firstUserMessage = conversation.messages.find(
+    (message) => message.role === "user",
+  );
+
+  return [
+    conversation.mode,
+    request.matchId.trim(),
+    request.focusQuestion.trim(),
+    firstUserMessage?.id ?? "",
+    firstUserMessage?.content ?? "",
+  ].join("\u001d");
 }
 
 function buildConversationSummary(conversation: AnalysisConversation) {
@@ -251,7 +275,7 @@ function formatMatchChipLabel(
       : `${winnerLabel} · #${trimmed}`;
   }
 
-  return `比赛 ID ${trimmed}`;
+  return `比赛编号 ${trimmed}`;
 }
 
 // 后端在模型超时/降级时会返回类似 "教练模型响应较慢，这次先给你一个本地简版结论。"
@@ -284,7 +308,7 @@ function formatPlayerSideContext(side: AnalysisRequest["playerSide"]) {
 }
 
 function formatPlayerPositionContext(position: AnalysisRequest["playerPosition"]) {
-  return position ? `${position}号位` : "";
+  return formatPlayerPositionRole(position);
 }
 
 function resolveThinkingRequestMode(
@@ -618,6 +642,41 @@ function normalizeConversationContent(content: string) {
   return parsed ? parsed.join("\n").trim() : content;
 }
 
+function buildMessageSyncSignature(messages: AnalysisConversation["messages"]) {
+  return messages
+    .map((message) =>
+      [
+        message.id,
+        message.role,
+        message.content,
+        message.pending ? "pending" : "settled",
+        message.deepThinking ? "deep" : "normal",
+      ].join("\u001f"),
+    )
+    .join("\u001e");
+}
+
+function buildFollowUpSyncSignature(followUps: AnalysisConversation["followUps"]) {
+  return followUps
+    .map((followUp) => [followUp.question, followUp.answer].join("\u001f"))
+    .join("\u001e");
+}
+
+function buildConversationSyncSignature(
+  conversation: AnalysisConversation,
+  messages: AnalysisConversation["messages"],
+) {
+  return [
+    conversation.mode,
+    conversation.title,
+    conversation.summary,
+    conversation.source,
+    conversation.generatedAt,
+    buildMessageSyncSignature(messages),
+    buildFollowUpSyncSignature(conversation.followUps),
+  ].join("\u001d");
+}
+
 function sanitizeMessages(messages: AnalysisConversation["messages"]) {
   const seenIds = new Set<string>();
   let changed = false;
@@ -746,7 +805,54 @@ function buildFollowUpContextSummary({
   return limitContextSummary(context);
 }
 
+function upsertStreamingAssistantMessage(
+  messages: AnalysisConversation["messages"],
+  assistantId: string,
+  content: string,
+  pending: boolean,
+  deepThinking?: boolean,
+) {
+  const nextAssistantMessage = {
+    id: assistantId,
+    role: "assistant" as const,
+    content: content.trim() ? content : "…",
+    pending,
+    deepThinking: deepThinking || undefined,
+  };
+
+  if (messages.some((message) => message.id === assistantId)) {
+    return messages.map((message) =>
+      message.id === assistantId ? nextAssistantMessage : message,
+    );
+  }
+
+  return [...messages, nextAssistantMessage];
+}
+
+function getFinalAssistantAnswer(payload: AnalyzeStreamPayload, fallback: string) {
+  const assistantMessage = payload.conversation?.messages
+    .slice()
+    .reverse()
+    .find((message) => message.role === "assistant");
+
+  return assistantMessage?.content ?? payload.answer ?? payload.text ?? fallback;
+}
+
+function getLastAssistantMessageId(
+  messages: AnalysisConversation["messages"],
+  fallbackId: string,
+) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "assistant") {
+      return messages[index].id;
+    }
+  }
+
+  return fallbackId;
+}
+
 export function ResultView({
+  conversationId,
   request,
   conversation,
   warning,
@@ -758,6 +864,22 @@ export function ResultView({
   const sanitizedIncomingMessages = useMemo(
     () => sanitizeMessages(conversation.messages),
     [conversation.messages],
+  );
+  const incomingConversationSync = useMemo(
+    () => ({
+      followUps: conversation.followUps,
+      messages: sanitizedIncomingMessages.messages,
+      rawMessagesSignature: buildMessageSyncSignature(conversation.messages),
+      signature: buildConversationSyncSignature(
+        conversation,
+        sanitizedIncomingMessages.messages,
+      ),
+    }),
+    [conversation, sanitizedIncomingMessages],
+  );
+  const activeConversationKey = useMemo(
+    () => conversationId ?? buildConversationIdentity(request, conversation),
+    [conversationId, conversation, request],
   );
   const [messages, setMessages] = useState(sanitizedIncomingMessages.messages);
   const [followUps, setFollowUps] = useState(conversation.followUps);
@@ -778,25 +900,47 @@ export function ResultView({
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const latestUpdateRef = useRef({
+    request,
     conversation,
     warning,
+    messages,
     currentMatchSummary,
     currentDeepThinking,
     onConversationChange,
   });
+  const lastConversationSyncRef = useRef({
+    key: activeConversationKey,
+    signature: incomingConversationSync.signature,
+  });
+  const reportedSanitizationSignatureRef = useRef<string | null>(null);
   const autoLoadedReplayJobIdsRef = useRef<Set<string>>(new Set());
   const replayJobId = currentReplayJob?.job_id ?? "";
   const replayJobStatus = currentReplayJob?.status ?? "";
 
   useEffect(() => {
-    setMessages(sanitizedIncomingMessages.messages);
-    setFollowUps(conversation.followUps);
-    setDraft("");
-    setSendError("");
-    setJobPollError("");
-    setEditingMessageId(null);
-    setEditingDraft("");
-  }, [conversation, sanitizedIncomingMessages]);
+    const previousSync = lastConversationSyncRef.current;
+    const conversationChanged = previousSync.key !== activeConversationKey;
+    const contentChanged = previousSync.signature !== incomingConversationSync.signature;
+
+    if (!conversationChanged && !contentChanged) {
+      return;
+    }
+
+    lastConversationSyncRef.current = {
+      key: activeConversationKey,
+      signature: incomingConversationSync.signature,
+    };
+    setMessages(incomingConversationSync.messages);
+    setFollowUps(incomingConversationSync.followUps);
+
+    if (conversationChanged) {
+      setDraft("");
+      setSendError("");
+      setJobPollError("");
+      setEditingMessageId(null);
+      setEditingDraft("");
+    }
+  }, [activeConversationKey, incomingConversationSync]);
 
   useEffect(() => {
     setCurrentReplayJob(replayJob ?? null);
@@ -816,19 +960,31 @@ export function ResultView({
 
   useEffect(() => {
     latestUpdateRef.current = {
+      request,
       conversation,
       warning,
+      messages,
       currentMatchSummary,
       currentDeepThinking,
       onConversationChange,
     };
-  }, [conversation, currentDeepThinking, currentMatchSummary, onConversationChange, warning]);
+  }, [
+    conversation,
+    currentDeepThinking,
+    currentMatchSummary,
+    messages,
+    onConversationChange,
+    request,
+    warning,
+  ]);
 
   const loadCompletedReplayAnalysis = useCallback(async (
     job: ReplayPreparation,
     fallbackMatchSummary?: MatchSummary | null,
   ) => {
-    const matchId = request.matchId.trim();
+    const latestAtStart = latestUpdateRef.current;
+    const requestForRefresh = latestAtStart.request;
+    const matchId = requestForRefresh.matchId.trim();
     const loadKey = job.job_id || job.match_id || matchId;
 
     if (!matchId || autoLoadedReplayJobIdsRef.current.has(loadKey)) {
@@ -838,59 +994,175 @@ export function ResultView({
     autoLoadedReplayJobIdsRef.current.add(loadKey);
 
     try {
+      const replayAssistantId = getLastAssistantMessageId(
+        latestAtStart.messages,
+        "assistant-replay-refresh",
+      );
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(requestForRefresh),
       });
-      const payload = (await response.json()) as {
-        conversation?: AnalysisConversation;
-        warning?: string;
-        replayJob?: ReplayPreparation | null;
-        matchSummary?: MatchSummary | null;
-        deepThinking?: DeepThinkingInsight | null;
-      };
 
-      if (!response.ok || !payload.conversation) {
+      let streamedAnswer = "";
+      const streamState: {
+        finalPayload: AnalyzeStreamPayload | null;
+        streamError: AnalyzeStreamPayload | null;
+        preparationPayload: AnalyzeStreamPayload | null;
+      } = {
+        finalPayload: null,
+        streamError: null,
+        preparationPayload: null,
+      };
+      let nextReplayJob: ReplayPreparation | null = job;
+      let nextMatchSummary = fallbackMatchSummary ?? latestAtStart.currentMatchSummary;
+      let nextDeepThinking = latestAtStart.currentDeepThinking;
+
+      await readAnalyzeResponseEvents(response, {
+        onEvent(event) {
+          if (event.type === "error") {
+            streamState.streamError = event.payload;
+            return;
+          }
+
+          if (event.type === "preparation") {
+            streamState.preparationPayload = event.payload;
+            nextReplayJob = event.payload.replayJob ?? nextReplayJob;
+            nextMatchSummary = event.payload.matchSummary ?? nextMatchSummary;
+            nextDeepThinking = event.payload.deepThinking ?? nextDeepThinking;
+            setCurrentReplayJob(nextReplayJob);
+            setCurrentMatchSummary(nextMatchSummary);
+            setCurrentDeepThinking(nextDeepThinking);
+            return;
+          }
+
+          if (event.type === "delta") {
+            streamedAnswer += event.text;
+            setMessages((currentMessages) =>
+              upsertStreamingAssistantMessage(
+                currentMessages,
+                replayAssistantId,
+                streamedAnswer,
+                true,
+                requestForRefresh.deepThinking,
+              ),
+            );
+            return;
+          }
+
+          if (event.type === "final") {
+            streamState.finalPayload = event.payload;
+          }
+        },
+      });
+
+      if (
+        !response.ok ||
+        streamState.streamError ||
+        (!streamState.finalPayload && !streamedAnswer.trim())
+      ) {
         throw new Error("Replay analysis refresh failed.");
       }
 
-      const sanitizedPayloadMessages = sanitizeMessages(payload.conversation.messages);
-      const nextReplayJob =
-        "replayJob" in payload ? payload.replayJob ?? job : job;
-      const nextMatchSummary =
-        payload.matchSummary ?? fallbackMatchSummary ?? currentMatchSummary;
-      const nextDeepThinking = payload.deepThinking ?? currentDeepThinking;
+      const finalPayload = streamState.finalPayload;
+      nextReplayJob = finalPayload?.replayJob ?? nextReplayJob;
+      nextMatchSummary = finalPayload?.matchSummary ?? nextMatchSummary;
+      nextDeepThinking = finalPayload?.deepThinking ?? nextDeepThinking;
 
-      setMessages(sanitizedPayloadMessages.messages);
-      setFollowUps(payload.conversation.followUps);
+      if (finalPayload?.conversation) {
+        const sanitizedPayloadMessages = sanitizeMessages(
+          finalPayload.conversation.messages,
+        );
+        const nextConversation = {
+          ...finalPayload.conversation,
+          messages: sanitizedPayloadMessages.messages,
+        };
+
+        setMessages(sanitizedPayloadMessages.messages);
+        setFollowUps(nextConversation.followUps);
+        setCurrentReplayJob(nextReplayJob);
+        setCurrentMatchSummary(nextMatchSummary);
+        setCurrentDeepThinking(nextDeepThinking);
+        setJobPollError("");
+        latestUpdateRef.current.onConversationChange?.(
+          nextConversation,
+          finalPayload.warning ?? "",
+          {
+            replayJob: nextReplayJob,
+            matchSummary: nextMatchSummary,
+            deepThinking: nextDeepThinking,
+          },
+        );
+        return;
+      }
+
+      const nextMessages = upsertStreamingAssistantMessage(
+        latestAtStart.messages,
+        replayAssistantId,
+        getFinalAssistantAnswer(finalPayload ?? {}, streamedAnswer),
+        false,
+        requestForRefresh.deepThinking,
+      );
+      const nextConversation: AnalysisConversation = {
+        ...latestAtStart.conversation,
+        messages: nextMessages,
+        followUps: buildStreamingFollowUps({
+          payload: finalPayload,
+          question: requestForRefresh.focusQuestion,
+        }),
+        source: "live-ai",
+        generatedAt: new Date().toISOString(),
+      };
+
+      setMessages(nextMessages);
+      setFollowUps(nextConversation.followUps);
       setCurrentReplayJob(nextReplayJob);
       setCurrentMatchSummary(nextMatchSummary);
       setCurrentDeepThinking(nextDeepThinking);
       setJobPollError("");
-      onConversationChange?.(payload.conversation, payload.warning ?? "", {
-        replayJob: nextReplayJob,
-        matchSummary: nextMatchSummary,
-        deepThinking: nextDeepThinking,
-      });
+      latestUpdateRef.current.onConversationChange?.(
+        nextConversation,
+        finalPayload?.warning ?? "",
+        {
+          replayJob: nextReplayJob,
+          matchSummary: nextMatchSummary,
+          deepThinking: nextDeepThinking,
+        },
+      );
     } catch {
       autoLoadedReplayJobIdsRef.current.delete(loadKey);
       setJobPollError("录像已完成处理，但自动加载复盘失败。请重新提交这个比赛编号。");
     }
-  }, [currentDeepThinking, currentMatchSummary, onConversationChange, request]);
+  }, []);
 
   useEffect(() => {
     if (!sanitizedIncomingMessages.changed) {
+      reportedSanitizationSignatureRef.current = null;
       return;
     }
+
+    if (
+      reportedSanitizationSignatureRef.current ===
+      incomingConversationSync.rawMessagesSignature
+    ) {
+      return;
+    }
+
+    reportedSanitizationSignatureRef.current =
+      incomingConversationSync.rawMessagesSignature;
 
     onConversationChange?.({
       ...conversation,
       messages: sanitizedIncomingMessages.messages,
     });
-  }, [conversation, onConversationChange, sanitizedIncomingMessages]);
+  }, [
+    conversation,
+    incomingConversationSync.rawMessagesSignature,
+    onConversationChange,
+    sanitizedIncomingMessages,
+  ]);
 
   useEffect(() => {
     const node = bottomRef.current;
@@ -901,7 +1173,7 @@ export function ResultView({
     if (typeof node.scrollIntoView === "function") {
       node.scrollIntoView({ block: "end", behavior: "smooth" });
     }
-  }, [messages.length, isSending]);
+  }, [messages, isSending]);
 
   useEffect(() => {
     const node = inputRef.current;
@@ -996,6 +1268,10 @@ export function ResultView({
   const generatedAtLabel = formatGeneratedAt(conversation.generatedAt);
   const playerSideLabel = formatPlayerSideContext(request.playerSide);
   const playerPositionLabel = formatPlayerPositionContext(request.playerPosition);
+  const hasPendingAssistantMessage = messages.some(
+    (message) => message.role === "assistant" && message.pending,
+  );
+  const shouldShowFollowUps = !isSending && followUps.length > 0;
 
   async function submitQuestion(
     rawQuestion: string,
@@ -1009,6 +1285,7 @@ export function ResultView({
 
     setSendError("");
     setDraft("");
+    setFollowUps([]);
 
     const baseMessages = options?.baseMessages ?? messages;
     const userMessageId = createTurnId("follow-up-user");
@@ -1018,14 +1295,37 @@ export function ResultView({
       content: question,
     };
     const nextMessagesWithUser = [...baseMessages, userMessage];
+    const assistantId = createTurnId("follow-up-assistant");
+    const nextMessagesWithAssistant = upsertStreamingAssistantMessage(
+      nextMessagesWithUser,
+      assistantId,
+      "",
+      true,
+      thinkingMode,
+    );
 
-    setMessages(nextMessagesWithUser);
+    setMessages(nextMessagesWithAssistant);
     setIsSending(true);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     try {
+      let streamedAnswer = "";
+      const streamState: {
+        finalPayload: AnalyzeStreamPayload | null;
+        streamError: AnalyzeStreamPayload | null;
+        preparationPayload: AnalyzeStreamPayload | null;
+      } = {
+        finalPayload: null,
+        streamError: null,
+        preparationPayload: null,
+      };
+      let nextMessages = nextMessagesWithAssistant;
+      let nextReplayJob = currentReplayJob;
+      let nextMatchSummary = currentMatchSummary;
+      let nextDeepThinking = currentDeepThinking;
+
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
@@ -1046,60 +1346,137 @@ export function ResultView({
         signal: controller.signal,
       });
 
-      const payload = (await response.json()) as {
-        error?: string;
-        conversation?: AnalysisConversation;
-        warning?: string;
-        replayJob?: ReplayPreparation | null;
-        matchSummary?: MatchSummary | null;
-        deepThinking?: DeepThinkingInsight | null;
-      };
+      await readAnalyzeResponseEvents(response, {
+        onEvent(event) {
+          if (event.type === "error") {
+            streamState.streamError = event.payload;
+            return;
+          }
 
-      if (!response.ok || !payload.conversation) {
-        setSendError(payload.error ?? "继续追问失败，请稍后再试。");
-        return;
-      }
+          if (event.type === "preparation") {
+            streamState.preparationPayload = event.payload;
+            nextReplayJob = event.payload.replayJob ?? nextReplayJob;
+            nextMatchSummary = event.payload.matchSummary ?? nextMatchSummary;
+            nextDeepThinking = event.payload.deepThinking ?? nextDeepThinking;
+            nextMessages = upsertStreamingAssistantMessage(
+              nextMessagesWithUser,
+              assistantId,
+              event.payload.warning ??
+                "录像还在解析中，我会先保留这条追问，等数据准备好后继续。",
+              true,
+              thinkingMode,
+            );
+            setMessages(nextMessages);
+            setCurrentReplayJob(nextReplayJob);
+            setCurrentMatchSummary(nextMatchSummary);
+            setCurrentDeepThinking(nextDeepThinking);
+            return;
+          }
 
-      const assistantMessage =
-        payload.conversation.messages[payload.conversation.messages.length - 1];
+          if (event.type === "delta") {
+            streamedAnswer += event.text;
+            nextMessages = upsertStreamingAssistantMessage(
+              nextMessagesWithUser,
+              assistantId,
+              streamedAnswer,
+              true,
+              thinkingMode,
+            );
+            setMessages(nextMessages);
+            return;
+          }
 
-      if (!assistantMessage || assistantMessage.role !== "assistant") {
-        setSendError("对话结果解析失败，请稍后再试。");
-        return;
-      }
-
-      const assistantId = createTurnId("follow-up-assistant");
-      const nextMessages = [
-        ...nextMessagesWithUser,
-        {
-          id: assistantId,
-          role: "assistant" as const,
-          content: assistantMessage.content,
-          deepThinking: thinkingMode || undefined,
+          if (event.type === "final") {
+            streamState.finalPayload = event.payload;
+            nextMessages = upsertStreamingAssistantMessage(
+              nextMessagesWithUser,
+              assistantId,
+              getFinalAssistantAnswer(event.payload, event.answer ?? streamedAnswer),
+              false,
+              thinkingMode,
+            );
+            nextReplayJob = event.payload.replayJob ?? nextReplayJob;
+            nextMatchSummary = event.payload.matchSummary ?? nextMatchSummary;
+            nextDeepThinking = event.payload.deepThinking ?? nextDeepThinking;
+          }
         },
-      ];
+      });
 
-      const nextReplayJob =
-        "replayJob" in payload ? payload.replayJob ?? null : currentReplayJob;
-      const nextMatchSummary = payload.matchSummary ?? currentMatchSummary;
-      const nextDeepThinking = payload.deepThinking ?? currentDeepThinking;
+      if (!response.ok || streamState.streamError) {
+        setSendError(streamState.streamError?.error ?? "继续追问失败，请稍后再试。");
+        setMessages(nextMessagesWithUser);
+        onConversationChange?.({
+          ...conversation,
+          messages: nextMessagesWithUser,
+        });
+        return;
+      }
+
+      if (!streamState.finalPayload && streamedAnswer.trim()) {
+        nextMessages = upsertStreamingAssistantMessage(
+          nextMessagesWithUser,
+          assistantId,
+          streamedAnswer,
+          false,
+          thinkingMode,
+        );
+      }
+
+      if (
+        !streamState.finalPayload &&
+        !streamedAnswer.trim() &&
+        streamState.preparationPayload
+      ) {
+        nextMessages = upsertStreamingAssistantMessage(
+          nextMessagesWithUser,
+          assistantId,
+          streamState.preparationPayload.warning ??
+            "录像还在解析中，我会先保留这条追问，等数据准备好后继续。",
+          false,
+          thinkingMode,
+        );
+      }
+
+      if (!streamState.finalPayload && !streamedAnswer.trim()) {
+        if (!streamState.preparationPayload) {
+          setSendError("对话结果解析失败，请稍后再试。");
+          setMessages(nextMessagesWithUser);
+          return;
+        }
+      }
+
+      const finalPayload = streamState.finalPayload;
+      const nextFollowUps =
+        finalPayload?.conversation?.followUps?.length
+          ? finalPayload.conversation.followUps
+          : buildStreamingFollowUps({
+              payload: finalPayload ?? streamState.preparationPayload,
+              question,
+            });
 
       setMessages(nextMessages);
-      setFollowUps(payload.conversation.followUps);
+      setFollowUps(nextFollowUps);
       setCurrentReplayJob(nextReplayJob);
       setCurrentMatchSummary(nextMatchSummary);
       setCurrentDeepThinking(nextDeepThinking);
-      onConversationChange?.({
-        ...conversation,
-        messages: nextMessages,
-        followUps: payload.conversation.followUps,
-        generatedAt: payload.conversation.generatedAt,
-        source: payload.conversation.source,
-      }, payload.warning, {
-        replayJob: nextReplayJob,
-        matchSummary: nextMatchSummary,
-        deepThinking: nextDeepThinking,
-      });
+      onConversationChange?.(
+        {
+          ...conversation,
+          messages: nextMessages,
+          followUps: nextFollowUps,
+          generatedAt:
+            finalPayload?.conversation?.generatedAt ?? new Date().toISOString(),
+          source: finalPayload?.conversation?.source ?? "live-ai",
+        },
+        finalPayload
+          ? finalPayload.warning
+          : streamState.preparationPayload?.warning,
+        {
+          replayJob: nextReplayJob,
+          matchSummary: nextMatchSummary,
+          deepThinking: nextDeepThinking,
+        },
+      );
     } catch (error) {
       if ((error as Error)?.name === "AbortError") {
         // User stopped the request — keep their message visible so they can edit & retry.
@@ -1274,11 +1651,7 @@ export function ResultView({
                     message.role === "user"
                       ? "analysis-chat-message-block-user-compact"
                       : ""
-                  } ${isEditing ? "analysis-chat-message-block-editing" : ""} ${
-                    message.role === "assistant" && message.deepThinking
-                      ? "analysis-chat-message-block-deep-thinking"
-                      : ""
-                  }`}
+                  } ${isEditing ? "analysis-chat-message-block-editing" : ""}`}
                 >
                   <div className="analysis-chat-bubble-head">
                     <span className="analysis-chat-bubble-label">
@@ -1340,7 +1713,9 @@ export function ResultView({
                         </button>
                       </div>
                     </div>
-                  ) : message.role === "assistant" && message.pending ? (
+                  ) : message.role === "assistant" &&
+                    message.pending &&
+                    !message.content.trim().replace(/^…+$/, "") ? (
                     <div
                       className="analysis-chat-typing"
                       role="status"
@@ -1399,7 +1774,7 @@ export function ResultView({
             );
           })}
 
-          {isSending ? (
+          {isSending && !hasPendingAssistantMessage ? (
             <article
               className="analysis-chat-row analysis-chat-row-assistant"
               aria-live="polite"
@@ -1444,38 +1819,42 @@ export function ResultView({
       </div>
 
       <div className="analysis-chat-dock analysis-chat-dock-blended analysis-chat-dock-integrated">
-        <section className="analysis-chat-suggestion-block analysis-chat-suggestion-strip">
-          <div className="analysis-chat-suggestion-head">
-            <span className="analysis-chat-suggestion-title">下一步方案</span>
-            <span className="analysis-chat-suggestion-count">{followUps.length}</span>
-          </div>
-          <div className="analysis-chat-suggestions">
-            {followUps.map((followUp, index) => (
-              <button
-                key={`${followUp.question}-${index}`}
-                type="button"
-                className="analysis-chat-suggestion"
-                aria-label={followUp.question}
-                onClick={() => void submitQuestion(followUp.question)}
-              >
-                <span className="analysis-chat-suggestion-meta">
-                  方案 {index + 1}
-                </span>
-                <span className="analysis-chat-suggestion-question">
-                  {followUp.question}
-                </span>
-                <span className="analysis-chat-suggestion-preview">
-                  {buildFollowUpPreview(followUp.answer)}
-                </span>
-                <ChevronRight
-                  size={16}
-                  className="analysis-chat-suggestion-icon"
-                  aria-hidden="true"
-                />
-              </button>
-            ))}
-          </div>
-        </section>
+        {shouldShowFollowUps ? (
+          <section className="analysis-chat-suggestion-block analysis-chat-suggestion-strip">
+            <div className="analysis-chat-suggestion-head">
+              <span className="analysis-chat-suggestion-title">下一步方案</span>
+              <span className="analysis-chat-suggestion-count">{followUps.length}</span>
+            </div>
+            <div className="analysis-chat-suggestions">
+              {followUps.map((followUp, index) => (
+                <button
+                  key={`${followUp.question}-${index}`}
+                  type="button"
+                  className="analysis-chat-suggestion"
+                  aria-label={followUp.question}
+                  onClick={() => void submitQuestion(followUp.question)}
+                >
+                  <span className="analysis-chat-suggestion-meta">
+                    方案 {index + 1}
+                  </span>
+                  <span className="analysis-chat-suggestion-question">
+                    {followUp.question}
+                  </span>
+                  {followUp.answer.trim() ? (
+                    <span className="analysis-chat-suggestion-preview">
+                      {buildFollowUpPreview(followUp.answer)}
+                    </span>
+                  ) : null}
+                  <ChevronRight
+                    size={16}
+                    className="analysis-chat-suggestion-icon"
+                    aria-hidden="true"
+                  />
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <div className="analysis-chat-composer-shell">
           <form

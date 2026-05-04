@@ -18,6 +18,6 @@ describe("StyleLabPage", () => {
     expect(screen.getAllByText("Ancient Lens")).toHaveLength(2);
     expect(screen.getAllByText("继续追问")).toHaveLength(2);
     expect(screen.getAllByText("这局为什么会输？")).toHaveLength(2);
-    expect(screen.getAllByText("比赛 8123456789")).toHaveLength(2);
+    expect(screen.getAllByText("比赛编号 8123456789")).toHaveLength(2);
   });
 });

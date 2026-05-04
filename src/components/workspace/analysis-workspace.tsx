@@ -1,6 +1,17 @@
 "use client";
 
-import { ChevronUp, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings2, Sparkles, SquarePen, X } from "lucide-react";
+import {
+  ChevronUp,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
+  Search,
+  Settings2,
+  Sparkles,
+  SquarePen,
+  X,
+} from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
@@ -17,7 +28,16 @@ import {
   selectAnalysisHistoryItem,
   subscribeAnalysisResult,
 } from "@/lib/analysis/client-session";
+import {
+  buildStreamingFollowUps,
+  readAnalyzeResponseEvents,
+  type AnalyzeStreamPayload,
+} from "@/lib/analysis/chat-stream";
 import { detectAnalysisInput } from "@/lib/analysis/input-mode";
+import {
+  formatPlayerPositionRole,
+  playerPositionRoleLabels,
+} from "@/lib/analysis/player-context";
 import type {
   AnalysisConversation,
   AnalysisRequest,
@@ -26,18 +46,10 @@ import type {
   ReplayPreparation,
 } from "@/lib/analysis/schema";
 
-type AnalyzeApiResponse = {
-  conversation: AnalysisConversation;
-  warning?: string;
-  replayJob?: ReplayPreparation | null;
-  matchSummary?: MatchSummary | null;
-  deepThinking?: DeepThinkingInsight | null;
-  error?: string;
-  fieldErrors?: Record<string, string[] | undefined>;
-};
+type AnalyzeApiResponse = AnalyzeStreamPayload;
 
 const ADVANCED_OPTIONS_LABEL = "设置";
-const ENTRY_LABEL = "比赛 ID 或问题";
+const ENTRY_LABEL = "比赛编号或问题";
 const FOCUS_QUESTION_LABEL = "补充说明";
 const PLAYER_SIDE_LABEL = "我方阵营";
 const PLAYER_POSITION_LABEL = "我的位置";
@@ -69,20 +81,69 @@ const PLAYER_POSITION_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "", label: "未选择" },
-  { value: "1", label: "1 号位" },
-  { value: "2", label: "2 号位" },
-  { value: "3", label: "3 号位" },
-  { value: "4", label: "4 号位" },
-  { value: "5", label: "5 号位" },
+  { value: "1", label: playerPositionRoleLabels["1"] },
+  { value: "2", label: playerPositionRoleLabels["2"] },
+  { value: "3", label: playerPositionRoleLabels["3"] },
+  { value: "4", label: playerPositionRoleLabels["4"] },
+  { value: "5", label: playerPositionRoleLabels["5"] },
 ];
 
+const EXAMPLE_PROMPT_BATCH_MIN = 5;
+const EXAMPLE_PROMPT_BATCH_MAX = 6;
 const EXAMPLE_PROMPTS = [
   "我中单总在 7-12 分钟掉节奏，怎么修？",
   "Roshan 前 20 秒该干什么？",
   "团战阵容怎么打才不会乱？",
   "辅助前 5 分钟怎么保大核不被压崩？",
   "帮我复盘这场比赛，找一下高地前脱节的原因",
+  "优势路前 10 分钟该优先刷钱还是参团？",
+  "我方领先后为什么总是被翻盘？",
+  "劣势局怎么判断该守高地还是出去带线？",
+  "中期第一波雾应该围绕谁来打？",
+  "对线被压时我该先补经济还是喊队友帮？",
+  "辅助什么时候该做眼，什么时候该蹲人？",
+  "纯辅助前期买道具的优先级怎么排？",
+  "我打优势路总是参团晚，怎么判断时机？",
+  "对面开雾时我应该看哪些地图信号？",
+  "阵容缺控制时团战应该怎么开？",
+  "我们为什么拿了 Roshan 还是推不上高？",
+  "逆风局第一件保命装应该怎么选？",
+  "这把谁才是我方真正的节奏点？",
+  "我玩辅助怎么判断该保人还是游走？",
+  "三号位什么时候该先出团队装？",
+  "高地前僵住了应该先处理哪条线？",
+  "对面有先手爆发时团战站位怎么调？",
+  "我方视野总被排，下一步该怎么做？",
+  "打盾前后最容易犯的一个错是什么？",
+  "这局最该复盘的是对线、团战还是运营？",
 ] as const;
+
+function getRandomExampleBatchSize() {
+  return (
+    EXAMPLE_PROMPT_BATCH_MIN +
+    Math.floor(
+      Math.random() * (EXAMPLE_PROMPT_BATCH_MAX - EXAMPLE_PROMPT_BATCH_MIN + 1),
+    )
+  );
+}
+
+function shufflePrompts(prompts: readonly string[]) {
+  return prompts
+    .map((prompt) => ({ prompt, sort: Math.random() }))
+    .sort((left, right) => left.sort - right.sort)
+    .map(({ prompt }) => prompt);
+}
+
+function buildExamplePromptBatch(previousPrompts: readonly string[] = []) {
+  const previous = new Set(previousPrompts);
+  const availablePrompts = EXAMPLE_PROMPTS.filter((prompt) => !previous.has(prompt));
+  const source =
+    availablePrompts.length >= EXAMPLE_PROMPT_BATCH_MAX
+      ? availablePrompts
+      : EXAMPLE_PROMPTS;
+
+  return shufflePrompts(source).slice(0, getRandomExampleBatchSize());
+}
 
 function cloneRequest(request: AnalysisRequest): AnalysisRequest {
   return {
@@ -92,6 +153,33 @@ function cloneRequest(request: AnalysisRequest): AnalysisRequest {
   };
 }
 
+function stripHiddenAdvancedFields(request: AnalysisRequest): AnalysisRequest {
+  return {
+    ...request,
+    focusQuestion: "",
+    contextSummary: "",
+    skillBracket: "",
+    role: "",
+    playerSide: "",
+    playerPosition: "",
+    lane: "",
+    matchTitle: "",
+    patch: "",
+    draftSummary: "",
+    laneOutcome: "",
+    replayNotes: "",
+    transcript: "",
+    timeline: [],
+  };
+}
+
+function getDraftForSubmission(
+  draft: AnalysisRequest,
+  advancedVisible: boolean,
+): AnalysisRequest {
+  return advancedVisible ? draft : stripHiddenAdvancedFields(draft);
+}
+
 function buildDefaultReplayQuestion(draft: AnalysisRequest): string {
   const sideLabel =
     draft.playerSide === "radiant"
@@ -99,12 +187,12 @@ function buildDefaultReplayQuestion(draft: AnalysisRequest): string {
       : draft.playerSide === "dire"
       ? "夜魇"
       : "";
-  const position = draft.playerPosition;
+  const position = formatPlayerPositionRole(draft.playerPosition);
 
   // 1) 阵营 + 位置 都选了 —— 主角=我，最具针对性
   if (sideLabel && position) {
     return (
-      `我是${sideLabel}${position}号位。帮我复盘这把：` +
+      `我是${sideLabel}${position}。帮我复盘这把：` +
       `(1) 这局胜负的核心原因是什么；` +
       `(2) 我个人哪里亏了——从对线、关键团战站位、出装节点、Gank/回防时机、Roshan 与高地节奏里挑 2-3 个具体场景说；` +
       `(3) 下一把我立刻能用上的一条动作。`
@@ -124,7 +212,7 @@ function buildDefaultReplayQuestion(draft: AnalysisRequest): string {
   // 3) 只选位置 —— 主角=我，但没绑阵营
   if (!sideLabel && position) {
     return (
-      `我玩${position}号位。帮我复盘这把：` +
+      `我玩${position}。帮我复盘这把：` +
       `(1) 这局胜负的核心原因是什么；` +
       `(2) 这个位置我哪里亏了——从对线、关键团战站位、出装节点、Gank/回防时机、视野与节奏里挑 2-3 个具体场景说；` +
       `(3) 下一把我这个位置立刻能用上的一条动作。`
@@ -188,6 +276,125 @@ function markAssistantDeepThinking(
   };
 }
 
+function isTransientConversationSummary(summary: string) {
+  const normalized = summary.trim();
+  return normalized === "正在生成回答" || normalized === "录像处理中";
+}
+
+function compactConversationPreview(content: string) {
+  const normalized = content.replace(/\s+/g, " ").trim();
+
+  if (normalized.length <= 80) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 80)}...`;
+}
+
+function getLatestSettledMessagePreview(
+  messages: AnalysisConversation["messages"],
+) {
+  const message = [...messages]
+    .reverse()
+    .find((item) => !item.pending && item.content.trim().replace(/^…+$/, ""));
+
+  return message ? compactConversationPreview(message.content) : "";
+}
+
+function resolveCompletedConversationSummary(
+  conversation: AnalysisConversation,
+  assistantContent: string,
+) {
+  if (!isTransientConversationSummary(conversation.summary)) {
+    return conversation.summary;
+  }
+
+  return compactConversationPreview(assistantContent) || conversation.summary;
+}
+
+function buildHistoryPreview(conversation: AnalysisConversation) {
+  const summary = conversation.summary.trim();
+  const messagePreview = getLatestSettledMessagePreview(conversation.messages);
+
+  if (summary && (!isTransientConversationSummary(summary) || !messagePreview)) {
+    return compactConversationPreview(summary);
+  }
+
+  return messagePreview;
+}
+
+function updateStreamingAssistantMessage({
+  conversation,
+  content,
+  pending,
+  deepThinking,
+}: {
+  conversation: AnalysisConversation;
+  content: string;
+  pending: boolean;
+  deepThinking?: boolean;
+}): AnalysisConversation {
+  const messages = [...conversation.messages];
+  const assistantIndex = [...messages]
+    .reverse()
+    .findIndex((message) => message.role === "assistant");
+  const targetIndex =
+    assistantIndex === -1 ? -1 : messages.length - 1 - assistantIndex;
+  const nextAssistantMessage = {
+    id: targetIndex === -1 ? "assistant-entry" : messages[targetIndex].id,
+    role: "assistant" as const,
+    content: content.trim() ? content : "…",
+    pending,
+    deepThinking: deepThinking || undefined,
+  };
+
+  if (targetIndex === -1) {
+    messages.push(nextAssistantMessage);
+  } else {
+    messages[targetIndex] = nextAssistantMessage;
+  }
+
+  return {
+    ...conversation,
+    summary: pending
+      ? "正在生成回答"
+      : resolveCompletedConversationSummary(
+          conversation,
+          nextAssistantMessage.content,
+        ),
+    messages,
+  };
+}
+
+function mergeFinalStreamPayload(
+  fallbackConversation: AnalysisConversation,
+  payload: AnalyzeApiResponse,
+  fallbackAnswer: string,
+  question: string,
+  deepThinking?: boolean,
+) {
+  if (payload.conversation) {
+    return deepThinking
+      ? markAssistantDeepThinking(payload.conversation)
+      : payload.conversation;
+  }
+
+  return updateStreamingAssistantMessage({
+    conversation: {
+      ...fallbackConversation,
+      source: "live-ai",
+      generatedAt: new Date().toISOString(),
+      followUps: buildStreamingFollowUps({
+        payload,
+        question,
+      }),
+    },
+    content: payload.answer ?? payload.text ?? fallbackAnswer,
+    pending: false,
+    deepThinking,
+  });
+}
+
 function buildHistoryLabel(title: string) {
   return title.trim() || "未命名对话";
 }
@@ -197,7 +404,7 @@ function formatPlayerSideLabel(value: AnalysisRequest["playerSide"]) {
 }
 
 function formatPlayerPositionLabel(value: AnalysisRequest["playerPosition"]) {
-  return PLAYER_POSITION_OPTIONS.find((option) => option.value === value)?.label ?? "";
+  return formatPlayerPositionRole(value);
 }
 
 function buildInitialUserContent(request: AnalysisRequest) {
@@ -210,9 +417,9 @@ function buildInitialUserContent(request: AnalysisRequest) {
   const question = request.focusQuestion.trim();
 
   return [
-    matchId ? `比赛 ID：${matchId}` : "",
+    matchId ? `比赛编号：${matchId}` : "",
     selectedContext ? `视角：${selectedContext}` : "",
-    question ? `${matchId ? "补充说明" : "问题"}：${question}` : "",
+    question ? (matchId ? `补充说明：${question}` : question) : "",
     request.contextSummary.trim()
       ? `补充上下文：${request.contextSummary.trim()}`
       : "",
@@ -231,7 +438,7 @@ function buildReplayProcessingConversation(
 
   return {
     mode: "match-replay",
-    title: `比赛 ${matchId}`,
+    title: `比赛编号 ${matchId}`,
     summary: "录像处理中",
     source: "demo-engine",
     generatedAt: new Date().toISOString(),
@@ -245,26 +452,13 @@ function buildReplayProcessingConversation(
         id: "assistant-entry",
         role: "assistant",
         content: [
-          `已收到比赛 ${matchId}，我先把对话打开。`,
+          `已收到比赛编号 ${matchId}，我先把对话打开。`,
           `录像正在后台处理，${REPLAY_PROCESSING_ESTIMATE}`,
           "数据准备好之前，我不会编造这局的时间点、经济差或具体操作。处理完成后回到这条对话，就能继续基于这场比赛复盘。",
         ].join("\n\n"),
       },
     ],
-    followUps: [
-      {
-        question: "大概多久能好？",
-        answer: REPLAY_PROCESSING_ESTIMATE,
-      },
-      {
-        question: "处理好后怎么继续？",
-        answer: "回到这条对话即可。录像数据准备好后，继续问这场比赛的问题，会直接读取对应录像数据。",
-      },
-      {
-        question: "现在会不会编造细节？",
-        answer: "不会。未解析完成前只显示处理状态，不会把通用建议包装成这场比赛的结论。",
-      },
-    ],
+    followUps: [],
   };
 }
 
@@ -324,9 +518,13 @@ export function AnalysisWorkspace() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
+  const [visibleExamplePrompts, setVisibleExamplePrompts] = useState<string[]>([]);
 
   useEffect(() => {
     setHasHydrated(true);
+    setVisibleExamplePrompts((currentPrompts) =>
+      currentPrompts.length ? currentPrompts : buildExamplePromptBatch(),
+    );
   }, []);
 
   useEffect(() => {
@@ -386,7 +584,9 @@ export function AnalysisWorkspace() {
     const storedDraftState = loadDraftState();
 
     if (storedDraftState) {
-      const restoredDraft = cloneRequest(storedDraftState.draft);
+      const restoredDraft = storedDraftState.showAdvanced
+        ? cloneRequest(storedDraftState.draft)
+        : stripHiddenAdvancedFields(cloneRequest(storedDraftState.draft));
       const restoredEntry =
         storedDraftState.entryText ??
         (restoredDraft.matchId || restoredDraft.focusQuestion || "");
@@ -475,6 +675,34 @@ export function AnalysisWorkspace() {
     setIsSubmitting(true);
 
     try {
+      let currentConversation = optimisticResult.result.conversation;
+      let currentWarning = optimisticResult.result.warning;
+      let currentReplayJob: ReplayPreparation | null = null;
+      let currentMatchSummary: MatchSummary | null = null;
+      let currentDeepThinking: DeepThinkingInsight | null = null;
+      let streamedAnswer = "";
+      const streamState: {
+        finalPayload: AnalyzeApiResponse | null;
+        streamError: AnalyzeApiResponse | null;
+      } = {
+        finalPayload: null,
+        streamError: null,
+      };
+
+      const commitStreamState = () => {
+        saveAnalysisResult({
+          id: optimisticResult.id,
+          request: requestForSubmit,
+          result: {
+            conversation: currentConversation,
+            warning: currentWarning,
+            replayJob: currentReplayJob,
+            matchSummary: currentMatchSummary,
+            deepThinking: currentDeepThinking,
+          },
+        });
+      };
+
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
@@ -483,15 +711,61 @@ export function AnalysisWorkspace() {
         body: JSON.stringify(requestForSubmit),
       });
 
-      let payload: AnalyzeApiResponse | null = null;
+      await readAnalyzeResponseEvents(response, {
+        onEvent(event) {
+          if (event.type === "error") {
+            streamState.streamError = event.payload;
+            return;
+          }
 
-      try {
-        payload = (await response.json()) as AnalyzeApiResponse;
-      } catch {
-        payload = null;
-      }
+          if (event.type === "preparation") {
+            currentWarning =
+              event.payload.warning ??
+              currentWarning ??
+              `录像正在后台处理，${REPLAY_PROCESSING_ESTIMATE}`;
+            currentReplayJob = event.payload.replayJob ?? currentReplayJob;
+            currentMatchSummary = event.payload.matchSummary ?? currentMatchSummary;
+            currentDeepThinking = event.payload.deepThinking ?? currentDeepThinking;
+            currentConversation = {
+              ...currentConversation,
+              summary: "录像处理中",
+            };
+            commitStreamState();
+            return;
+          }
 
-      if (!response.ok) {
+          if (event.type === "delta") {
+            streamedAnswer += event.text;
+            currentConversation = updateStreamingAssistantMessage({
+              conversation: currentConversation,
+              content: streamedAnswer,
+              pending: true,
+              deepThinking: requestForSubmit.deepThinking,
+            });
+            commitStreamState();
+            return;
+          }
+
+          if (event.type === "final") {
+            streamState.finalPayload = event.payload;
+            currentConversation = mergeFinalStreamPayload(
+              currentConversation,
+              event.payload,
+              event.answer ?? streamedAnswer,
+              requestForSubmit.focusQuestion,
+              requestForSubmit.deepThinking,
+            );
+            currentWarning = event.payload.warning;
+            currentReplayJob = event.payload.replayJob ?? currentReplayJob;
+            currentMatchSummary = event.payload.matchSummary ?? currentMatchSummary;
+            currentDeepThinking = event.payload.deepThinking ?? currentDeepThinking;
+            commitStreamState();
+          }
+        },
+      });
+
+      if (!response.ok || streamState.streamError) {
+        const payload = streamState.streamError;
         setFieldErrors(payload?.fieldErrors ?? {});
         setRequestError(payload?.error ?? "分析请求失败，请检查输入后重试。");
         const fallbackMessage = isReplay
@@ -525,7 +799,27 @@ export function AnalysisWorkspace() {
         return;
       }
 
-      if (!payload) {
+      if (!streamState.finalPayload && streamedAnswer.trim()) {
+        currentConversation = updateStreamingAssistantMessage({
+          conversation: {
+            ...currentConversation,
+            followUps: buildStreamingFollowUps({
+              payload: null,
+              question: requestForSubmit.focusQuestion,
+            }),
+          },
+          content: streamedAnswer,
+          pending: false,
+          deepThinking: requestForSubmit.deepThinking,
+        });
+        commitStreamState();
+      }
+
+      if (
+        !streamState.finalPayload &&
+        !streamedAnswer.trim() &&
+        !(isReplay && currentWarning)
+      ) {
         setFieldErrors({});
         setRequestError("对话结果解析失败，请稍后再试。");
         saveAnalysisResult({
@@ -554,19 +848,6 @@ export function AnalysisWorkspace() {
 
       setFieldErrors({});
       setRequestError("");
-      saveAnalysisResult({
-        id: optimisticResult.id,
-        request: requestForSubmit,
-        result: {
-          conversation: requestForSubmit.deepThinking
-            ? markAssistantDeepThinking(payload.conversation)
-            : payload.conversation,
-          warning: payload.warning,
-          replayJob: payload.replayJob,
-          matchSummary: payload.matchSummary,
-          deepThinking: payload.deepThinking ?? null,
-        },
-      });
     } catch {
       setFieldErrors({});
       setRequestError("暂时无法生成对话结果，请稍后再试。");
@@ -604,12 +885,22 @@ export function AnalysisWorkspace() {
   }
 
   async function submitAnalysis() {
-    await submitPreparedRequest(prepareSubmission(entryText, draft));
+    await submitPreparedRequest(
+      prepareSubmission(entryText, getDraftForSubmission(draft, showAdvanced)),
+    );
   }
 
   async function submitExamplePrompt(example: string) {
     setEntryText(example);
-    await submitPreparedRequest(prepareSubmission(example, draft));
+    await submitPreparedRequest(
+      prepareSubmission(example, getDraftForSubmission(draft, showAdvanced)),
+    );
+  }
+
+  function refreshExamplePrompts() {
+    setVisibleExamplePrompts((currentPrompts) =>
+      buildExamplePromptBatch(currentPrompts),
+    );
   }
 
   const sidebarToggleLabel = isSidebarCollapsed ? "展开侧栏" : "收起侧栏";
@@ -721,11 +1012,7 @@ export function AnalysisWorkspace() {
               {history.length ? (
                 history.map((entry) => {
                   const active = currentResult?.id === entry.id;
-                  const preview =
-                    entry.result.conversation.summary.trim() ||
-                    (entry.result.conversation.messages[0]?.content.slice(0, 80) +
-                      "…") ||
-                    "";
+                  const preview = buildHistoryPreview(entry.result.conversation);
 
                   return (
                     <div
@@ -781,6 +1068,7 @@ export function AnalysisWorkspace() {
           </section>
         ) : currentResult ? (
           <ResultView
+            conversationId={currentResult.id}
             request={currentResult.request}
             conversation={currentResult.result.conversation}
             warning={currentResult.result.warning}
@@ -816,7 +1104,7 @@ export function AnalysisWorkspace() {
               <span className="chat-empty-launch-eyebrow">DOTA 2 · REPLAY COPILOT</span>
               <h1 className="chat-empty-launch-title">Ancient Lens</h1>
               <p className="chat-empty-launch-tagline">
-                粘贴比赛 ID 直接复盘，或问任何 Dota 问题 — 给你下一把先改的那一项。
+                输入比赛编号直接复盘，或提问任意 Dota2 相关问题。
               </p>
             </header>
 
@@ -841,7 +1129,7 @@ export function AnalysisWorkspace() {
                       value={entryText}
                       onChange={(event) => setEntryText(event.target.value)}
                       className="search-input search-input-home search-input-home-minimal"
-                      placeholder="输入比赛 ID，或直接提一个 Dota 问题"
+                    placeholder="输入比赛编号，或直接提一个 Dota 问题"
                     />
                   </div>
 
@@ -964,9 +1252,20 @@ export function AnalysisWorkspace() {
               className="chat-empty-examples"
               aria-label="常见复盘问题"
             >
-              <span className="chat-empty-examples-label">常见复盘问题</span>
+              <div className="chat-empty-examples-header">
+                <span className="chat-empty-examples-label">常见复盘问题</span>
+                <button
+                  type="button"
+                  className="chat-empty-examples-refresh"
+                  aria-label="换一批常见问题"
+                  title="换一批常见问题"
+                  onClick={refreshExamplePrompts}
+                >
+                  <RefreshCw size={15} aria-hidden="true" />
+                </button>
+              </div>
               <div className="chat-empty-examples-row">
-                {EXAMPLE_PROMPTS.map((example) => (
+                {visibleExamplePrompts.map((example) => (
                   <button
                     key={example}
                     type="button"

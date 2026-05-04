@@ -71,7 +71,7 @@ function PreviewCard({
                   key={`${accent}-${item}`}
                   type="button"
                   className={`${styles.previewConversationItem} ${
-                    item === "比赛 8123456789" ? styles.previewConversationItemActive : ""
+                    item === "比赛编号 8123456789" ? styles.previewConversationItemActive : ""
                   }`}
                 >
                   <span className={styles.previewConversationTitle}>{item}</span>
@@ -82,7 +82,7 @@ function PreviewCard({
 
           <div className={styles.previewStage}>
             <div className={styles.previewContextBar}>
-              <span className={styles.previewChip}>比赛 8123456789</span>
+              <span className={styles.previewChip}>比赛编号 8123456789</span>
               <span className={styles.previewChip}>录像复盘</span>
               <span className={styles.previewChip}>数据分析</span>
             </div>

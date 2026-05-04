@@ -38,7 +38,7 @@ export function buildReplayConversation(
   input: AnalysisRequest,
   report: AnalysisReport,
 ): AnalysisConversation {
-  const title = input.matchId ? `比赛 ${input.matchId}` : "比赛复盘";
+  const title = input.matchId ? `比赛编号 ${input.matchId}` : "比赛复盘";
 
   return {
     mode: "match-replay",

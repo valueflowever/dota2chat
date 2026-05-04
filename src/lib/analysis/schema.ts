@@ -123,7 +123,7 @@ const conversationMessageSchema = z.object({
 
 const conversationFollowUpSchema = z.object({
   question: z.string().trim().min(1),
-  answer: z.string().trim().min(1),
+  answer: z.string(),
 });
 
 export const analysisConversationSchema = z.object({

@@ -51,6 +51,24 @@ function createConversationResponse(matchId: string, verdict: string) {
   ) as unknown as Response;
 }
 
+function createStreamResponse(
+  events: Array<{ event: string; data: Record<string, unknown> }>,
+) {
+  return new Response(
+    events
+      .map(({ event, data }) =>
+        [`event: ${event}`, `data: ${JSON.stringify(data)}`, ""].join("\n"),
+      )
+      .join("\n"),
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+      },
+    },
+  ) as unknown as Response;
+}
+
 describe("AnalysisWorkspace", () => {
   beforeEach(() => {
     globalThis.sessionStorage?.clear?.();
@@ -229,6 +247,11 @@ describe("AnalysisWorkspace", () => {
 
     expect(container.querySelector(".chat-empty-settings-panel")).not.toBeNull();
     expect(container.querySelector(".form-input-home-minimal")).not.toBeNull();
+    expect(screen.getByRole("option", { name: "优势路" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "中单" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "劣势路" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "辅助" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "纯辅助" })).toBeInTheDocument();
   });
 
   it("allows typing into the empty-state settings textarea", async () => {
@@ -314,7 +337,7 @@ describe("AnalysisWorkspace", () => {
         : null;
 
     expect(requestBody.matchId).toBe("8123456789");
-    expect(requestBody.focusQuestion).toContain("我是夜魇4号位");
+    expect(requestBody.focusQuestion).toContain("我是夜魇辅助");
     expect(requestBody.focusQuestion).toContain("我个人哪里亏了");
   });
 
@@ -361,6 +384,8 @@ describe("AnalysisWorkspace", () => {
           ...defaultDraft,
           mode: "deep-thinking",
           deepThinking: true,
+          playerSide: "radiant",
+          playerPosition: "1",
         },
         entryText: "团战该怎么站位？",
         showAdvanced: false,
@@ -390,21 +415,41 @@ describe("AnalysisWorkspace", () => {
 
     expect(requestBody.deepThinking).toBe(false);
     expect(requestBody.mode).toBe("ranked-coaching");
+    expect(requestBody.playerSide).toBe("");
+    expect(requestBody.playerPosition).toBe("");
+    expect(requestBody.focusQuestion).toBe("团战该怎么站位？");
   });
 
   it("submits an empty-state quick question directly to the backend", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
-      createConversationResponse("question", "quick question backend answer"),
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchMock = vi.spyOn(global, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      }),
     );
 
     const { container } = renderWithProviders(<AnalysisWorkspace />);
+    await waitFor(() => {
+      expect(container.querySelector(".chat-empty-example")).not.toBeNull();
+    });
     const quickQuestion = container.querySelector(
       ".chat-empty-example",
     ) as HTMLButtonElement;
     const questionText = quickQuestion.textContent ?? "";
 
     await user.click(quickQuestion);
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("main")).getAllByText(questionText).length,
+      ).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText(`问题：${questionText}`)).toBeNull();
+
+    resolveFetch?.(
+      createConversationResponse("question", "quick question backend answer"),
+    );
 
     await waitFor(() => {
       expect(screen.getAllByText("quick question backend answer").length).toBeGreaterThan(0);
@@ -419,6 +464,62 @@ describe("AnalysisWorkspace", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestBody.matchId).toBe("");
     expect(requestBody.focusQuestion).toBe(questionText);
+  });
+
+  it("streams an empty-state answer into the active assistant message", async () => {
+    const user = userEvent.setup();
+    const finalAnswer = "先说结论：流式回答已经校准。";
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      createStreamResponse([
+        { event: "delta", data: { text: "先说结论：" } },
+        { event: "delta", data: { text: "流式回答已经开始。" } },
+        { event: "final", data: { answer: finalAnswer } },
+        { event: "done", data: {} },
+      ]),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+
+    await user.type(
+      container.querySelector("#entry-input") as HTMLInputElement,
+      "中单怎么控符？",
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(finalAnswer).length).toBeGreaterThan(0);
+    });
+    expect(
+      container.querySelector(".chat-history-item-preview")?.textContent,
+    ).toContain(finalAnswer);
+    expect(
+      container.querySelector(".chat-history-item-preview")?.textContent,
+    ).not.toContain("正在生成回答");
+  });
+
+  it("shows a random-sized batch of common questions and refreshes without repeats", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+    const getExampleTexts = () =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>(".chat-empty-example"))
+        .map((button) => button.textContent?.trim() ?? "")
+        .filter(Boolean);
+
+    await waitFor(() => {
+      expect(getExampleTexts().length).toBeGreaterThanOrEqual(5);
+    });
+
+    const firstBatch = getExampleTexts();
+    expect(firstBatch.length).toBeLessThanOrEqual(6);
+
+    await user.click(screen.getByRole("button", { name: "换一批常见问题" }));
+
+    await waitFor(() => {
+      const nextBatch = getExampleTexts();
+      expect(nextBatch.length).toBeGreaterThanOrEqual(5);
+      expect(nextBatch.length).toBeLessThanOrEqual(6);
+      expect(nextBatch.some((question) => firstBatch.includes(question))).toBe(false);
+    });
   });
 
   it("loads a replay id from the main entry and records it in history", async () => {
@@ -472,6 +573,8 @@ describe("AnalysisWorkspace", () => {
         within(screen.getByRole("main")).getAllByText(/录像正在后台处理/u).length,
       ).toBeGreaterThan(0);
     });
+    expect(screen.queryByText("下一步方案")).toBeNull();
+    expect(screen.queryByText("大概多久能好？")).toBeNull();
 
     expect(container.querySelectorAll(".chat-history-item")).toHaveLength(1);
 
@@ -485,6 +588,9 @@ describe("AnalysisWorkspace", () => {
       ).toBeInTheDocument();
     });
 
+    expect(
+      within(screen.getByRole("main")).queryByText(/录像正在后台处理/u),
+    ).toBeNull();
     expect(container.querySelectorAll(".chat-history-item")).toHaveLength(1);
   });
 
@@ -516,7 +622,7 @@ describe("AnalysisWorkspace", () => {
     await waitFor(() => {
       const main = within(screen.getByRole("main"));
 
-      expect(main.getByText(/比赛 ID：8123456789/u)).toBeInTheDocument();
+      expect(main.getByText(/比赛编号：8123456789/u)).toBeInTheDocument();
       expect(main.getByText(new RegExp(`补充说明：${supplement}`, "u"))).toBeInTheDocument();
       expect(main.getAllByText(/录像正在后台处理/u).length).toBeGreaterThan(0);
     });

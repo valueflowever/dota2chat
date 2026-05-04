@@ -1,4 +1,5 @@
 import type { AnalysisRequest } from "@/lib/analysis/schema";
+import { formatPlayerPositionRole } from "@/lib/analysis/player-context";
 
 export type PromptBundle = {
   system: string;
@@ -112,7 +113,7 @@ function formatPlayerSide(value: AnalysisRequest["playerSide"]) {
 }
 
 function formatPlayerPosition(value: AnalysisRequest["playerPosition"]) {
-  return value ? `${value}号位` : "";
+  return formatPlayerPositionRole(value);
 }
 
 function formatTimeline(input: AnalysisRequest) {

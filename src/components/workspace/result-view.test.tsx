@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ResultView } from "@/components/workspace/result-view";
@@ -32,7 +33,7 @@ const baseRequest: AnalysisRequest = {
 
 const matchConversation: AnalysisConversation = {
   mode: "match-replay",
-  title: "比赛 8724913167",
+  title: "比赛编号 8724913167",
   summary: "首轮复盘",
   source: "demo-engine",
   generatedAt: "2026-04-06T00:00:00.000Z",
@@ -94,6 +95,31 @@ function createFollowUpResponse(answer: string) {
   ) as unknown as Response;
 }
 
+function createFollowUpStreamResponse(
+  answer: string,
+  payload: Record<string, unknown> = {},
+) {
+  return new Response(
+    [
+      "event: delta",
+      `data: ${JSON.stringify({ text: "流式片段：" })}`,
+      "",
+      "event: final",
+      `data: ${JSON.stringify({ answer, ...payload })}`,
+      "",
+      "event: done",
+      "data: {}",
+      "",
+    ].join("\n"),
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+      },
+    },
+  ) as unknown as Response;
+}
+
 describe("ResultView", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -110,7 +136,7 @@ describe("ResultView", () => {
 
     expect(screen.getByText("8724913167")).toBeInTheDocument();
     expect(screen.getByText(/先说结论：这局不是纯操作没打过/u)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "比赛 8724913167" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "比赛编号 8724913167" })).toBeInTheDocument();
     expect(screen.getByText("首轮复盘")).toBeInTheDocument();
     expect(screen.getByText("当前分析")).toBeInTheDocument();
     expect(screen.getByText("录像复盘")).toBeInTheDocument();
@@ -169,7 +195,32 @@ describe("ResultView", () => {
       <ResultView request={baseRequest} conversation={matchConversation} />,
     );
 
-    expect(screen.getByText("比赛 ID 8724913167")).toBeInTheDocument();
+    expect(screen.getAllByText("比赛编号 8724913167").length).toBeGreaterThan(0);
+  });
+
+  it("keeps deep-thinking as a header badge without styling the content block", () => {
+    const { container } = render(
+      <ResultView
+        request={{
+          ...baseRequest,
+          mode: "deep-thinking",
+          deepThinking: true,
+        }}
+        conversation={{
+          ...matchConversation,
+          messages: matchConversation.messages.map((message) =>
+            message.role === "assistant"
+              ? { ...message, deepThinking: true }
+              : message,
+          ),
+        }}
+      />,
+    );
+
+    expect(container.querySelector(".analysis-chat-deep-thinking-badge")).not.toBeNull();
+    expect(
+      container.querySelector(".analysis-chat-message-block-deep-thinking"),
+    ).toBeNull();
   });
 
   it("shows winner + duration + id in the chip when match summary is loaded", () => {
@@ -350,6 +401,47 @@ describe("ResultView", () => {
     ).toBe(false);
   });
 
+  it("does not repeatedly report the same sanitized incoming messages", async () => {
+    const handleConversationChange = vi.fn();
+    const stickyConversation: AnalysisConversation = {
+      ...matchConversation,
+      messages: [
+        {
+          id: "duplicate-user",
+          role: "user",
+          content: "same incoming question",
+        },
+        {
+          id: "duplicate-user",
+          role: "assistant",
+          content: "same incoming answer",
+        },
+      ],
+    };
+
+    function StickyParent() {
+      const [, setRenderCount] = useState(0);
+
+      return (
+        <ResultView
+          request={baseRequest}
+          conversation={stickyConversation}
+          onConversationChange={(nextConversation) => {
+            handleConversationChange(nextConversation);
+            setRenderCount((current) => current + 1);
+          }}
+        />
+      );
+    }
+
+    render(<StickyParent />);
+
+    await waitFor(() => {
+      expect(handleConversationChange).toHaveBeenCalledTimes(1);
+    });
+    expect(handleConversationChange).toHaveBeenCalledTimes(1);
+  });
+
   it("normalizes legacy array-string assistant messages before rendering", () => {
     render(
       <ResultView
@@ -429,6 +521,115 @@ describe("ResultView", () => {
     expect(requestBody.contextSummary).toContain("连续追问");
     expect(requestBody.contextSummary).toContain("先说结论");
     expect(requestBody.contextSummary).toContain("这局高地前到底哪里脱节了？");
+  });
+
+  it("streams a typed follow-up into one assistant bubble", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      createFollowUpStreamResponse("流式片段：最终校准后的追问回答。", {
+        followUps: [
+          {
+            question: "backend follow-up one",
+            answer: "backend preview one",
+          },
+          {
+            question: "backend follow-up two",
+            answer: "backend preview two",
+          },
+          {
+            question: "backend follow-up three",
+            answer: "backend preview three",
+          },
+        ],
+      }),
+    );
+
+    render(<ResultView request={baseRequest} conversation={matchConversation} />);
+
+    await user.type(screen.getByLabelText("继续追问"), "这波为什么不能接？");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("流式片段：最终校准后的追问回答。")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("这波为什么不能接？")).toBeInTheDocument();
+    expect(screen.getByText("下一步方案")).toBeInTheDocument();
+    expect(screen.getByText("backend follow-up one")).toBeInTheDocument();
+    expect(screen.getByText("backend follow-up two")).toBeInTheDocument();
+    expect(screen.getByText("backend follow-up three")).toBeInTheDocument();
+    expect(screen.getByText("backend preview one")).toBeInTheDocument();
+    expect(screen.getByText("方案 3")).toBeInTheDocument();
+  });
+
+  it("keeps a typed draft when a completed answer syncs back from the parent", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (response: Response) => void;
+    const fetchPromise = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchMock = vi.spyOn(global, "fetch").mockReturnValue(fetchPromise);
+
+    function StatefulResultView() {
+      const [conversation, setConversation] = useState(matchConversation);
+
+      return (
+        <ResultView
+          request={baseRequest}
+          conversation={conversation}
+          onConversationChange={(nextConversation) => {
+            setConversation(nextConversation);
+          }}
+        />
+      );
+    }
+
+    const { container } = render(<StatefulResultView />);
+    const input = container.querySelector(
+      "#analysis-follow-up",
+    ) as HTMLTextAreaElement;
+    const sendButton = container.querySelector(
+      ".analysis-chat-send",
+    ) as HTMLButtonElement;
+
+    await user.type(input, "first question");
+    await user.click(sendButton);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(input).toHaveValue("");
+    });
+
+    await user.type(input, "draft while waiting");
+    expect(input).toHaveValue("draft while waiting");
+
+    resolveFetch(createFollowUpStreamResponse("final answer from backend"));
+
+    await waitFor(() => {
+      expect(screen.getByText("final answer from backend")).toBeInTheDocument();
+    });
+    expect(input).toHaveValue("draft while waiting");
+  });
+
+  it("does not render a second current assistant placeholder while sending", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(global, "fetch").mockReturnValue(new Promise<Response>(() => {}));
+
+    const { container } = render(
+      <ResultView request={baseRequest} conversation={matchConversation} />,
+    );
+
+    await user.type(screen.getByLabelText("继续追问"), "这波为什么不能接？");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(container.querySelectorAll(".analysis-chat-row-assistant")).toHaveLength(2);
+    });
+    expect(screen.getAllByText("Ancient Lens")).toHaveLength(2);
+    expect(screen.queryByText("下一步方案")).toBeNull();
   });
 
   it("does not keep deep-thinking mode on follow-up after the toggle is disabled", async () => {

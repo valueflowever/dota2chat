@@ -8,37 +8,29 @@ describe("POST /api/analyze", () => {
       "fetch",
       vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
-          matchId?: string;
-          focusQuestion: string;
+          question: string;
+          context?: { match_id?: string | null };
         };
-        const isReplay = Boolean(body.matchId?.trim());
+        const answerSeed = body.context?.match_id || body.question;
 
-        return Response.json({
-          conversation: {
-            mode: isReplay ? "match-replay" : "game-question",
-            title: isReplay ? `比赛 ${body.matchId}` : "游戏问题",
-            summary: "快速结论",
-            messages: [
-              {
-                id: "user-entry",
-                role: "user",
-                content: body.matchId || body.focusQuestion,
-              },
-              {
-                id: "assistant-entry",
-                role: "assistant",
-                content: "先说结论：测试回答",
-              },
-            ],
-            followUps: [
-              { question: "追问 1", answer: "回答 1" },
-              { question: "追问 2", answer: "回答 2" },
-              { question: "追问 3", answer: "回答 3" },
-            ],
-            source: "demo-engine",
-            generatedAt: new Date().toISOString(),
+        return new Response(
+          [
+            `event: delta`,
+            `data: ${JSON.stringify({ text: "先说结论：" })}`,
+            "",
+            `event: final`,
+            `data: ${JSON.stringify({ answer: `测试回答：${answerSeed}` })}`,
+            "",
+            "event: done",
+            "data: {}",
+            "",
+          ].join("\n"),
+          {
+            headers: {
+              "Content-Type": "text/event-stream",
+            },
           },
-        });
+        );
       }),
     );
   });
@@ -61,12 +53,26 @@ describe("POST /api/analyze", () => {
 
     expect(response.status).toBe(200);
 
-    const payload = await response.json();
+    const payload = await response.text();
 
-    expect(payload.conversation.mode).toBe("match-replay");
-    expect(payload.conversation.messages).toHaveLength(2);
-    expect(payload.conversation.followUps.length).toBeGreaterThanOrEqual(3);
-    expect(payload.conversation.source).toBeTruthy();
+    expect(response.headers.get("Content-Type")).toContain("text/event-stream");
+    expect(payload).toContain("event: delta");
+    expect(payload).toContain("测试回答：8724913167");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:8000/api/v1/chat/stream",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Accept: "text/event-stream",
+        }),
+      }),
+    );
+    const backendRequest = JSON.parse(
+      String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.body),
+    );
+    expect(backendRequest.question).toBe("这局最值得先改什么？");
+    expect(backendRequest.context.match_id).toBe("8724913167");
+    expect(backendRequest.answer_style).toBe("coach");
   });
 
   it("returns a quick-answer conversation for gameplay questions", async () => {
@@ -82,10 +88,15 @@ describe("POST /api/analyze", () => {
 
     expect(response.status).toBe(200);
 
-    const payload = await response.json();
+    const payload = await response.text();
 
-    expect(payload.conversation.mode).toBe("game-question");
-    expect(payload.conversation.messages[1].content).toContain("先说结论");
+    expect(payload).toContain("event: final");
+    expect(payload).toContain("火猫中单打蓝猫要注意什么");
+    const backendRequest = JSON.parse(
+      String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.body),
+    );
+    expect(backendRequest.question).toBe("火猫中单打蓝猫要注意什么？");
+    expect(backendRequest.context.match_id).toBeNull();
   });
 
   it("rejects invalid payloads with field errors", async () => {

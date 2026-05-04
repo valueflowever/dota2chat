@@ -24,7 +24,7 @@ export async function GET(_request: Request, context: RouteContext) {
     });
   } catch {
     return NextResponse.json(
-      { error: "后端录像解析状态服务暂时不可用，请确认 dota2-server 已启动。" },
+      { error: "录像解析状态服务暂时不可用。" },
       { status: 502 },
     );
   }
