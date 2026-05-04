@@ -10,7 +10,6 @@ describe("Home", () => {
     expect(container.querySelector(".chat-app-shell")).not.toBeNull();
     expect(container.querySelector(".chat-history-sidebar")).not.toBeNull();
     expect(container.querySelector(".chat-stage-main")).not.toBeNull();
-    expect(container.querySelector("#replay-loader-input")).not.toBeNull();
     expect(container.querySelector("#entry-input")).not.toBeNull();
     expect(container.querySelector(".chat-minimal-launch-form")).not.toBeNull();
     expect(container.querySelector(".icon-action-button-minimal")).not.toBeNull();

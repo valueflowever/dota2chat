@@ -234,6 +234,43 @@ function formatWinner(summary: MatchSummary) {
   return "胜负待同步";
 }
 
+function formatMatchChipLabel(
+  matchId: string,
+  summary?: MatchSummary | null,
+): string {
+  const trimmed = matchId.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (summary?.winner === "radiant" || summary?.winner === "dire") {
+    const winnerLabel = summary.winner === "radiant" ? "天辉胜" : "夜魇胜";
+    const duration = summary.duration_text?.trim();
+    return duration
+      ? `${winnerLabel} ${duration} · #${trimmed}`
+      : `${winnerLabel} · #${trimmed}`;
+  }
+
+  return `比赛 ID ${trimmed}`;
+}
+
+// 后端在模型超时/降级时会返回类似 "教练模型响应较慢，这次先给你一个本地简版结论。"
+// 这种歉意类提示对玩家无价值——胜负面板和助手消息本身已经提供了内容，
+// 前端在这里把它们过滤掉，避免顶部出现垃圾横幅。
+const FALLBACK_WARNING_PATTERNS = [
+  "本地简版",
+  "本地兜底",
+  "响应较慢",
+  "教练模型响应",
+];
+
+function isFallbackWarning(warning: string | undefined): boolean {
+  if (!warning) {
+    return false;
+  }
+  return FALLBACK_WARNING_PATTERNS.some((pattern) => warning.includes(pattern));
+}
+
 function formatPlayerSideContext(side: AnalysisRequest["playerSide"]) {
   if (side === "radiant") {
     return "天辉";
@@ -1151,7 +1188,7 @@ export function ResultView({
               <span className="analysis-chat-context-chip">{conversationModeLabel}</span>
               {request.matchId.trim() ? (
                 <span className="analysis-chat-context-chip">
-                  比赛 {request.matchId.trim()}
+                  {formatMatchChipLabel(request.matchId, currentMatchSummary)}
                 </span>
               ) : null}
               {playerSideLabel ? (
@@ -1169,7 +1206,9 @@ export function ResultView({
           </div>
         </header>
 
-        {warning ? <div className="warning-banner">{warning}</div> : null}
+        {warning && !isFallbackWarning(warning) ? (
+          <div className="warning-banner">{warning}</div>
+        ) : null}
 
         {currentDeepThinking ? (
           <DeepThinkingPanel insight={currentDeepThinking} />

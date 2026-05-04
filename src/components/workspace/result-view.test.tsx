@@ -3,7 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ResultView } from "@/components/workspace/result-view";
-import type { AnalysisConversation, AnalysisRequest } from "@/lib/analysis/schema";
+import type {
+  AnalysisConversation,
+  AnalysisRequest,
+  MatchSummary,
+} from "@/lib/analysis/schema";
 
 const baseRequest: AnalysisRequest = {
   audience: "solo-player",
@@ -158,6 +162,74 @@ describe("ResultView", () => {
     expect(screen.getByText("方案 1")).toBeInTheDocument();
     expect(screen.queryByText("关键事件速览")).not.toBeInTheDocument();
     expect(screen.queryByText("阶段复盘矩阵")).not.toBeInTheDocument();
+  });
+
+  it("shows match id chip with explicit label when match summary is not loaded", () => {
+    render(
+      <ResultView request={baseRequest} conversation={matchConversation} />,
+    );
+
+    expect(screen.getByText("比赛 ID 8724913167")).toBeInTheDocument();
+  });
+
+  it("shows winner + duration + id in the chip when match summary is loaded", () => {
+    const summary: MatchSummary = {
+      match_id: "8724913167",
+      title: "Radiant 36:42",
+      duration_seconds: 2202,
+      duration_text: "36:42",
+      winner: "radiant",
+      radiant_score: 32,
+      dire_score: 18,
+      radiant_team: "Radiant",
+      dire_team: "Dire",
+      radiant_lineup: [],
+      dire_lineup: [],
+      players: [],
+    };
+
+    render(
+      <ResultView
+        request={baseRequest}
+        conversation={matchConversation}
+        matchSummary={summary}
+      />,
+    );
+
+    expect(
+      screen.getByText("天辉胜 36:42 · #8724913167"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides fallback-style warnings about slow coach model and local backups", () => {
+    const { container } = render(
+      <ResultView
+        request={baseRequest}
+        conversation={matchConversation}
+        warning="教练模型响应较慢，这次先给你一个本地简版结论。"
+      />,
+    );
+
+    expect(
+      screen.queryByText(/教练模型响应较慢/u),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/本地简版/u)).not.toBeInTheDocument();
+    expect(container.querySelector(".warning-banner")).toBeNull();
+  });
+
+  it("still shows real warning messages that are not fallback apologies", () => {
+    const { container } = render(
+      <ResultView
+        request={baseRequest}
+        conversation={matchConversation}
+        warning="录像解析队列拥堵，结果可能延迟。"
+      />,
+    );
+
+    expect(
+      screen.getByText("录像解析队列拥堵，结果可能延迟。"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".warning-banner")).not.toBeNull();
   });
 
   it("sends a suggested question as a real chat turn", async () => {

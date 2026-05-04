@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUp, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings2, Sparkles, X } from "lucide-react";
+import { ChevronUp, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings2, Sparkles, SquarePen, X } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
@@ -41,8 +41,6 @@ const ENTRY_LABEL = "比赛 ID 或问题";
 const FOCUS_QUESTION_LABEL = "补充说明";
 const PLAYER_SIDE_LABEL = "我方阵营";
 const PLAYER_POSITION_LABEL = "我的位置";
-const DEFAULT_REPLAY_QUESTION =
-  "请分析这场比赛的整体节奏、关键转折点，以及下一把最值得优先修正的一项动作。";
 const REPLAY_PROCESSING_ESTIMATE =
   "预计 1-3 分钟；如果需要下载录像或解析服务刚启动，可能会更久。";
 const EMPTY_HISTORY: ReturnType<typeof getAnalysisHistorySnapshot> = [];
@@ -94,6 +92,54 @@ function cloneRequest(request: AnalysisRequest): AnalysisRequest {
   };
 }
 
+function buildDefaultReplayQuestion(draft: AnalysisRequest): string {
+  const sideLabel =
+    draft.playerSide === "radiant"
+      ? "天辉"
+      : draft.playerSide === "dire"
+      ? "夜魇"
+      : "";
+  const position = draft.playerPosition;
+
+  // 1) 阵营 + 位置 都选了 —— 主角=我，最具针对性
+  if (sideLabel && position) {
+    return (
+      `我是${sideLabel}${position}号位。帮我复盘这把：` +
+      `(1) 这局胜负的核心原因是什么；` +
+      `(2) 我个人哪里亏了——从对线、关键团战站位、出装节点、Gank/回防时机、Roshan 与高地节奏里挑 2-3 个具体场景说；` +
+      `(3) 下一把我立刻能用上的一条动作。`
+    );
+  }
+
+  // 2) 只选阵营 —— 主角=我方
+  if (sideLabel && !position) {
+    return (
+      `我在${sideLabel}这边。帮我复盘这把：` +
+      `(1) 这局胜负的核心原因是什么；` +
+      `(2) 我方哪里亏了——从对线压制、关键团战、出装节奏、Gank/回防时机、Roshan 与高地里挑 2-3 个具体场景说；` +
+      `(3) 我方下一把最先要修正的一条动作。`
+    );
+  }
+
+  // 3) 只选位置 —— 主角=我，但没绑阵营
+  if (!sideLabel && position) {
+    return (
+      `我玩${position}号位。帮我复盘这把：` +
+      `(1) 这局胜负的核心原因是什么；` +
+      `(2) 这个位置我哪里亏了——从对线、关键团战站位、出装节点、Gank/回防时机、视野与节奏里挑 2-3 个具体场景说；` +
+      `(3) 下一把我这个位置立刻能用上的一条动作。`
+    );
+  }
+
+  // 4) 都没选 —— 不能用 "我"，第三人称复盘
+  return (
+    `复盘这场比赛：` +
+    `(1) 胜负的核心原因是什么；` +
+    `(2) 双方关键转折——从对线压制、关键团战、Roshan 与高地、运营节奏里挑 2-3 个最值得复盘的具体场景说清楚；` +
+    `(3) 输的一方下一把最先要修正的一项动作。`
+  );
+}
+
 function prepareSubmission(entryText: string, draft: AnalysisRequest): AnalysisRequest {
   const parsedEntry = detectAnalysisInput(entryText);
   const supplement = draft.focusQuestion.trim();
@@ -102,7 +148,7 @@ function prepareSubmission(entryText: string, draft: AnalysisRequest): AnalysisR
     return {
       ...draft,
       matchId: parsedEntry.normalizedValue,
-      focusQuestion: supplement || DEFAULT_REPLAY_QUESTION,
+      focusQuestion: supplement || buildDefaultReplayQuestion(draft),
     };
   }
 
@@ -266,7 +312,6 @@ export function AnalysisWorkspace() {
 
   const [draft, setDraft] = useState<AnalysisRequest>(defaultDraft);
   const [entryText, setEntryText] = useState("");
-  const [replayLoaderValue, setReplayLoaderValue] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [thinkingMode, setThinkingMode] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -348,7 +393,6 @@ export function AnalysisWorkspace() {
 
       setDraft(restoredDraft);
       setEntryText(restoredEntry);
-      setReplayLoaderValue(restoredDraft.matchId || "");
       setShowAdvanced(storedDraftState.showAdvanced);
       setThinkingMode(Boolean(restoredDraft.deepThinking));
     }
@@ -375,7 +419,6 @@ export function AnalysisWorkspace() {
     setRequestError("");
     setFieldErrors({});
     setEntryText("");
-    setReplayLoaderValue("");
     setThinkingMode(false);
     setIsMobileDrawerOpen(false);
   }
@@ -569,23 +612,6 @@ export function AnalysisWorkspace() {
     await submitPreparedRequest(prepareSubmission(example, draft));
   }
 
-  async function handleReplayLoad() {
-    const replayId = replayLoaderValue.trim();
-
-    if (!replayId || isSubmitting) {
-      return;
-    }
-
-    setReplayLoaderValue("");
-
-    await submitPreparedRequest(
-      prepareSubmission(replayId, {
-        ...draft,
-        focusQuestion: "",
-      }),
-    );
-  }
-
   const sidebarToggleLabel = isSidebarCollapsed ? "展开侧栏" : "收起侧栏";
   const mobileDrawerActive = isMobileDrawerOpen;
   const renderFullSidebar = !isSidebarCollapsed || mobileDrawerActive;
@@ -635,15 +661,12 @@ export function AnalysisWorkspace() {
                 <Image
                   src="/dota2-logo.png"
                   alt="Dota 2"
-                  width={42}
-                  height={42}
+                  width={28}
+                  height={28}
                   priority
                 />
               </span>
-              <div className="chat-history-brand-copy">
-                <span className="chat-history-eyebrow">DOTA 2 · REPLAY COPILOT</span>
-                <h2 className="chat-history-heading">Ancient Lens</h2>
-              </div>
+              <h2 className="chat-history-heading">Ancient Lens</h2>
             </div>
 
             <button
@@ -670,48 +693,21 @@ export function AnalysisWorkspace() {
             </button>
           </div>
 
-          {renderFullSidebar ? (
-            <div className="chat-history-action-stack">
-              <div className="chat-history-action-panel">
-                <button
-                  type="button"
-                  className="chat-history-new"
-                  aria-label="新对话"
-                  onClick={handleNewChat}
-                >
-                  <span>新对话</span>
-                </button>
-              </div>
-
-              <form
-                className="chat-history-loader chat-history-loader-panel"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleReplayLoad();
-                }}
+          {/* "新对话" 始终渲染 —— 折叠态下变成纯图标按钮,展开态下显示图标+文案 */}
+          <div className="chat-history-action-stack">
+            <div className="chat-history-action-panel">
+              <button
+                type="button"
+                className="chat-history-new"
+                aria-label="新对话"
+                title="新对话"
+                onClick={handleNewChat}
               >
-                <span className="chat-history-section-label">录像载入</span>
-                <label htmlFor="replay-loader-input" className="sr-only">
-                  录像编号
-                </label>
-                <input
-                  id="replay-loader-input"
-                  aria-label="录像编号"
-                  value={replayLoaderValue}
-                  onChange={(event) => setReplayLoaderValue(event.target.value)}
-                  className="chat-history-loader-input"
-                  placeholder="输入录像编号"
-                />
-                <button
-                  type="submit"
-                  className="chat-history-loader-button"
-                  disabled={isSubmitting || !replayLoaderValue.trim()}
-                >
-                  {isSubmitting ? "加载中..." : "加载录像"}
-                </button>
-              </form>
+                <SquarePen size={16} aria-hidden="true" />
+                <span className="chat-history-new-label">新对话</span>
+              </button>
             </div>
-          ) : null}
+          </div>
         </div>
 
         {renderFullSidebar ? (
@@ -772,9 +768,7 @@ export function AnalysisWorkspace() {
               )}
             </div>
           </div>
-        ) : (
-          <div className="chat-history-collapsed-hint">对话</div>
-        )}
+        ) : null}
       </aside>
 
       <main className="chat-stage-main">

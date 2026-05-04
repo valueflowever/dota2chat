@@ -30,7 +30,6 @@ DOTA2_BACKEND_URL=http://127.0.0.1:8000
 
 未配置时默认使用 `http://127.0.0.1:8000`。
 
-不要在前端配置 `OPENAI_API_KEY` 或 `OPENAI_MODEL`。模型选择和 OpenAI 凭据由后端服务统一管理。
 
 ## 验证
 

@@ -15,8 +15,6 @@ describe("AnalysisPage", () => {
     expect(container.querySelector(".chat-history-sidebar")).not.toBeNull();
     expect(container.querySelector(".chat-history-new")).not.toBeNull();
     expect(container.querySelector(".chat-history-toggle")).not.toBeNull();
-    expect(container.querySelector("#replay-loader-input")).not.toBeNull();
-    expect(container.querySelector(".chat-history-loader-button")).not.toBeNull();
     expect(container.querySelector("#entry-input")).not.toBeNull();
     expect(container.querySelector(".chat-minimal-launch-form")).not.toBeNull();
   });

@@ -173,7 +173,6 @@ describe("AnalysisWorkspace", () => {
     expect(container.querySelector(".chat-empty-settings-panel")).toBeNull();
     expect(container.querySelector(".chat-history-action-stack")).not.toBeNull();
     expect(container.querySelector(".chat-history-list-panel")).not.toBeNull();
-    expect(container.querySelector("#replay-loader-input")).not.toBeNull();
     expect(container.querySelector("#entry-input")).not.toBeNull();
   });
 
@@ -187,8 +186,34 @@ describe("AnalysisWorkspace", () => {
     await user.click(collapseButton);
 
     expect(container.querySelector(".chat-app-shell-collapsed")).not.toBeNull();
-    expect(container.querySelector(".chat-history-collapsed-hint")).not.toBeNull();
+    // 折叠后新对话按钮(图标态)依旧存在
+    expect(container.querySelector(".chat-history-new")).not.toBeNull();
+    // 折叠态下不再渲染历史列表
+    expect(container.querySelector(".chat-history-list-panel")).toBeNull();
     expect(container.querySelector("#entry-input")).not.toBeNull();
+  });
+
+  it("opens a new chat directly from the collapsed sidebar's icon-only button", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+    const collapseButton = container.querySelector(
+      ".chat-history-toggle",
+    ) as HTMLButtonElement;
+
+    await user.click(collapseButton);
+
+    const newChatButton = container.querySelector(
+      ".chat-history-new",
+    ) as HTMLButtonElement;
+    expect(newChatButton).not.toBeNull();
+    expect(newChatButton.getAttribute("aria-label")).toBe("新对话");
+    // 折叠态:label span 不渲染文字给用户视觉,只剩 SquarePen 图标
+    expect(container.querySelector(".chat-history-new svg")).not.toBeNull();
+
+    await user.click(newChatButton);
+
+    // 点击后回到空白入口(说明 handleNewChat 被触发,清空了当前结果)
+    expect(container.querySelector(".chat-empty-stage")).not.toBeNull();
   });
 
   it("keeps the empty-state settings launcher and opens the minimal settings panel on demand", async () => {
@@ -257,6 +282,70 @@ describe("AnalysisWorkspace", () => {
     expect(requestBody.playerSide).toBe("dire");
     expect(requestBody.playerPosition).toBe("3");
     expect(requestBody.focusQuestion).toBe("团战该怎么站位？");
+  });
+
+  it("personalizes the default replay prompt when side and position are filled", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      createConversationResponse("8123456789", "personalized verdict"),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+
+    await user.click(
+      container.querySelector(".icon-action-button-minimal") as HTMLButtonElement,
+    );
+    await user.selectOptions(screen.getByLabelText("我方阵营"), "dire");
+    await user.selectOptions(screen.getByLabelText("我的位置"), "4");
+    await user.type(
+      container.querySelector("#entry-input") as HTMLInputElement,
+      "8123456789",
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(requestBody.matchId).toBe("8123456789");
+    expect(requestBody.focusQuestion).toContain("我是夜魇4号位");
+    expect(requestBody.focusQuestion).toContain("我个人哪里亏了");
+  });
+
+  it("uses third-person default replay prompt when neither side nor position is filled", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      createConversationResponse("8123456789", "third-person verdict"),
+    );
+
+    const { container } = renderWithProviders(<AnalysisWorkspace />);
+
+    await user.type(
+      container.querySelector("#entry-input") as HTMLInputElement,
+      "8123456789",
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const firstRequest = fetchMock.mock.calls[0]?.[1];
+    const requestBody =
+      typeof firstRequest === "object" && firstRequest && "body" in firstRequest
+        ? JSON.parse(String(firstRequest.body))
+        : null;
+
+    expect(requestBody.matchId).toBe("8123456789");
+    expect(requestBody.focusQuestion).toContain("复盘这场比赛");
+    expect(requestBody.focusQuestion).toContain("输的一方");
+    expect(requestBody.focusQuestion).not.toContain("我");
   });
 
   it("falls back to the audience mode when restored deep thinking is disabled", async () => {
@@ -332,7 +421,7 @@ describe("AnalysisWorkspace", () => {
     expect(requestBody.focusQuestion).toBe(questionText);
   });
 
-  it("loads a replay id from the sidebar and records it in history", async () => {
+  it("loads a replay id from the main entry and records it in history", async () => {
     const user = userEvent.setup();
     vi.spyOn(global, "fetch").mockResolvedValue(
       createConversationResponse(
@@ -342,17 +431,12 @@ describe("AnalysisWorkspace", () => {
     );
 
     const { container } = renderWithProviders(<AnalysisWorkspace />);
-    const replayInput = container.querySelector(
-      "#replay-loader-input",
+    const entryInput = container.querySelector(
+      "#entry-input",
     ) as HTMLInputElement;
-    const replaySubmit = container.querySelector(
-      ".chat-history-loader-button",
-    ) as HTMLButtonElement;
 
-    await user.type(replayInput, "8123456789");
-    await user.click(replaySubmit);
-
-    expect(replayInput.value).toBe("");
+    await user.type(entryInput, "8123456789");
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
 
     await waitFor(() => {
       expect(
@@ -376,17 +460,12 @@ describe("AnalysisWorkspace", () => {
     );
 
     const { container } = renderWithProviders(<AnalysisWorkspace />);
-    const replayInput = container.querySelector(
-      "#replay-loader-input",
+    const entryInput = container.querySelector(
+      "#entry-input",
     ) as HTMLInputElement;
-    const replaySubmit = container.querySelector(
-      ".chat-history-loader-button",
-    ) as HTMLButtonElement;
 
-    await user.type(replayInput, "8123456789");
-    await user.click(replaySubmit);
-
-    expect(replayInput.value).toBe("");
+    await user.type(entryInput, "8123456789");
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
 
     await waitFor(() => {
       expect(
@@ -460,16 +539,13 @@ describe("AnalysisWorkspace", () => {
     );
 
     const { container } = renderWithProviders(<AnalysisWorkspace />);
-    const replayInput = container.querySelector(
-      "#replay-loader-input",
+    const entryInput = container.querySelector(
+      "#entry-input",
     ) as HTMLInputElement;
-    const replaySubmit = container.querySelector(
-      ".chat-history-loader-button",
-    ) as HTMLButtonElement;
     const newChatButton = container.querySelector(".chat-history-new") as HTMLButtonElement;
 
-    await user.type(replayInput, "8123456789");
-    await user.click(replaySubmit);
+    await user.type(entryInput, "8123456789");
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
 
     await waitFor(() => {
       expect(
@@ -497,16 +573,13 @@ describe("AnalysisWorkspace", () => {
       );
 
     const { container } = renderWithProviders(<AnalysisWorkspace />);
-    const replayInput = container.querySelector(
-      "#replay-loader-input",
-    ) as HTMLInputElement;
-    const replaySubmit = container.querySelector(
-      ".chat-history-loader-button",
-    ) as HTMLButtonElement;
     const newChatButton = container.querySelector(".chat-history-new") as HTMLButtonElement;
 
-    await user.type(replayInput, "8123456789");
-    await user.click(replaySubmit);
+    await user.type(
+      container.querySelector("#entry-input") as HTMLInputElement,
+      "8123456789",
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
 
     await waitFor(() => {
       expect(
@@ -515,9 +588,15 @@ describe("AnalysisWorkspace", () => {
     });
 
     await user.click(newChatButton);
-    await user.clear(replayInput);
-    await user.type(replayInput, "9988776655");
-    await user.click(replaySubmit);
+
+    await waitFor(() => {
+      expect(container.querySelector("#entry-input")).not.toBeNull();
+    });
+    await user.type(
+      container.querySelector("#entry-input") as HTMLInputElement,
+      "9988776655",
+    );
+    await user.click(screen.getByRole("button", { name: "开始对话" }));
 
     await waitFor(() => {
       expect(
